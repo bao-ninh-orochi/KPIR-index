@@ -37,10 +37,11 @@ fn main() {
     );
 
     println!(
-        "kpir_query  m={} l={}B N={}  Qry={:.4} ms ({:.1} qry/s)  upload={}",
+        "kpir_query  m={} l={}B N={} pt={}  Qry={:.4} ms ({:.1} qry/s)  upload={}",
         cli.m,
         cli.value_bytes,
         cli.lwe_dim,
+        shape.plaintext_bits,
         stats.mean_ms(),
         stats.mean_ops,
         helpers::fmt_bytes(shape.query_bytes()),
@@ -48,16 +49,17 @@ fn main() {
 
     let mut csv = helpers::csv_writer(
         "kpir_query",
-        "scheme,m,value_bytes,epsilon,lwe_dim,columns,query_bytes,\
+        "scheme,m,value_bytes,epsilon,lwe_dim,plaintext_bits,columns,query_bytes,\
          mean_query_ms,mean_qps,min_qps,max_qps,stddev_qps",
     );
     writeln!(
         csv,
-        "kpir_index,{},{},{},{},{},{},{:.6},{:.2},{:.2},{:.2},{:.2}",
+        "kpir_index,{},{},{},{},{},{},{},{:.6},{:.2},{:.2},{:.2},{:.2}",
         cli.m,
         cli.value_bytes,
         cli.epsilon,
         cli.lwe_dim,
+        shape.plaintext_bits,
         shape.columns,
         shape.query_bytes(),
         stats.mean_ms(),

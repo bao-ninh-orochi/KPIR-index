@@ -16,10 +16,11 @@
 //!   privately retrieves the covering database column.
 //!
 //! [`scheme`] glues them: sort + hash keys, learn the map, repetition-
-//! encode the key-value pairs into an `R × C` byte matrix, then query /
-//! answer / recover with a single Row-KOPIR invocation. See [`params`]
-//! for the exact matrix geometry (which reproduces the reference
-//! communication numbers to the byte).
+//! encode the key-value pairs into an `R × C` `Z_p` matrix (records
+//! bit-packed into cells at the adaptively chosen plaintext width), then
+//! query / answer / recover with a single Row-KOPIR invocation. See
+//! [`params`] for the exact matrix geometry (which, at `plaintext_bits =
+//! 8`, reproduces the reference communication numbers to the byte).
 //!
 //! ```
 //! use kpir_index::scheme::{build_synthetic, hash_key, synthetic_value};

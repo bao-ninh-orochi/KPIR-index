@@ -6,23 +6,26 @@
 //! Ties the approximate key-to-index map ([`crate::pla`]) to the
 //! Row-KOPIR backend ([`simplepir`]). Setup sorts the hashed keys, learns
 //! the PLA map, and repetition-encodes the key-value pairs into the
-//! `R × C` byte matrix; a query extracts the approximate rank, selects the
+//! `R × C` `Z_p` matrix; a query extracts the approximate rank, selects the
 //! covering column, and privately retrieves it; recover scans the `≤ 2ε+3`
 //! candidate entries of that column for the fingerprint match.
 //!
 //! # Encoding (closed form of `mpc4j`'s column-major placement)
 //!
-//! Sort the `n` pairs by hashed key. The matrix cell at column `col`,
-//! plane-row `j` holds the sorted entry
-//! `fingerprint(k_g) ‖ value_g` where
+//! Sort the `n` pairs by hashed key. The slot at column `col`,
+//! plane-row `j` holds the sorted entry `fingerprint(k_g) ‖ value_g` where
 //! ```text
-//! g = col · data_rows + (j − ε − 1),   0 ≤ g < n   (else ⊥ = 0xFF)
+//! g = col · data_rows + (j − ε − 1),   0 ≤ g < n   (else ⊥)
 //! ```
-//! Each entry spans `partition = ε_bytes + ℓ` bytes across the response
-//! dimension `R = rows · partition`. The `ε+1` top / `ε+2` bottom
-//! boundary rows thus automatically hold the neighbouring columns' edge
-//! entries, so the true entry — within `ε+1` of the PLA estimate — always
-//! lands inside the single retrieved column.
+//! Each entry's `fingerprint(64 bits) ‖ value(8ℓ bits)` bitstring is
+//! packed LSB-first into `partition = ceil(payload_bits / plaintext_bits)`
+//! `Z_p` cells across the response dimension `R = rows · partition` (at
+//! `plaintext_bits = 8` this is one byte per cell — the `mpc4j` layout).
+//! Empty slots default to `⊥` (every cell `p − 1`, which reads back as
+//! fingerprint `u64::MAX`). The `ε+1` top / `ε+2` bottom boundary rows
+//! automatically hold the neighbouring columns' edge entries, so the true
+//! entry — within `ε+1` of the PLA estimate — always lands inside the
+//! single retrieved column.
 //!
 //! # Query / Recover
 //!
@@ -119,13 +122,18 @@ impl KpirClient {
     /// for the fingerprint match.
     pub fn recover(&self, key: &[u8], ans: &[u32]) -> Option<Vec<u8>> {
         let want = hash_key(key);
-        let bytes = self.inner.recover(ans);
+        let cells = self.inner.recover(ans);
         let partition = self.shape.partition;
+        let pt = self.shape.plaintext_bits;
         for j in 0..self.shape.rows {
-            let base = j * partition;
-            let fp = u64::from_le_bytes(bytes[base..base + FINGERPRINT_BYTES].try_into().unwrap());
+            let slot = &cells[j * partition..(j + 1) * partition];
+            let fp = read_bits(slot, pt, 0, FINGERPRINT_BITS);
             if fp == want {
-                return Some(bytes[base + FINGERPRINT_BYTES..base + partition].to_vec());
+                let mut val = vec![0u8; self.shape.value_bytes];
+                for (k, b) in val.iter_mut().enumerate() {
+                    *b = read_bits(slot, pt, FINGERPRINT_BITS + 8 * k, 8) as u8;
+                }
+                return Some(val);
             }
         }
         None
@@ -156,22 +164,73 @@ impl KpirClient {
     }
 }
 
+/// Fingerprint width in bits (`FINGERPRINT_BYTES · 8`).
+const FINGERPRINT_BITS: usize = FINGERPRINT_BYTES * 8;
+
+/// Write the low `n_bits` of `value` into `cells` starting at global bit
+/// `bit_offset`, LSB-first, where each cell holds `pt` bits (cell `i` =
+/// bits `[i·pt, (i+1)·pt)`). Straddles cell boundaries; leaves untouched
+/// bits (and the ragged high bits of the final cell) as they were.
+/// `n_bits ≤ 64`; `pt ≤ 31`, so every per-cell slice is `≤ 31 < 64` bits.
+#[inline]
+fn write_bits(cells: &mut [u32], pt: u32, bit_offset: usize, n_bits: usize, value: u64) {
+    let pt = pt as usize;
+    let mut written = 0usize;
+    while written < n_bits {
+        let global = bit_offset + written;
+        let cell = global / pt;
+        let intra = global % pt;
+        let take = (pt - intra).min(n_bits - written);
+        let mask = (1u64 << take) - 1;
+        let chunk = (value >> written) & mask;
+        let cur = cells[cell] as u64;
+        cells[cell] = ((cur & !(mask << intra)) | (chunk << intra)) as u32;
+        written += take;
+    }
+}
+
+/// Inverse of [`write_bits`]: read `n_bits` from `cells` at global bit
+/// `bit_offset` into the low bits of a `u64`.
+#[inline]
+fn read_bits(cells: &[u32], pt: u32, bit_offset: usize, n_bits: usize) -> u64 {
+    let pt = pt as usize;
+    let mut acc = 0u64;
+    let mut read = 0usize;
+    while read < n_bits {
+        let global = bit_offset + read;
+        let cell = global / pt;
+        let intra = global % pt;
+        let take = (pt - intra).min(n_bits - read);
+        let mask = (1u64 << take) - 1;
+        let chunk = (cells[cell] as u64 >> intra) & mask;
+        acc |= chunk << read;
+        read += take;
+    }
+    acc
+}
+
 /// Repetition-encode sorted entries into the transposed Row-KOPIR matrix
-/// `tdb` (`C × R`, `tdb[col*R + r] = D[r][col]`). `fill_value(g, buf)`
-/// writes the `value_bytes`-byte value of the `g`-th sorted entry.
+/// `tdb` (`C × R`, `tdb[col*R + r] = D[r][col]`). Each slot holds
+/// `fingerprint(64 bits) ‖ value(8ℓ bits)` bit-packed into `partition`
+/// `pt`-bit `Z_p` cells; empty slots are `⊥` (every cell `p − 1`).
+/// `fill_value(g, buf)` writes the `value_bytes`-byte value of the `g`-th
+/// sorted entry.
 fn encode_tdb(
     sorted_hashes: &[u64],
     shape: &MatrixShape,
     mut fill_value: impl FnMut(usize, &mut [u8]),
-) -> Vec<u8> {
+) -> Vec<u32> {
     let n = shape.n;
     let r = shape.response_dim();
     let partition = shape.partition;
+    let pt = shape.plaintext_bits;
     let data_rows = shape.data_rows as i64;
     let eps = shape.epsilon as i64;
 
-    // ⊥ default; boundary cells (g out of range) stay 0xFF.
-    let mut tdb = vec![0xFFu8; shape.columns * r];
+    // ⊥ default: every cell p − 1, so an untouched slot reads back as
+    // fingerprint u64::MAX (never matches a real key hash).
+    let sentinel = (1u32 << pt) - 1;
+    let mut tdb = vec![sentinel; shape.columns * r];
     let mut valbuf = vec![0u8; shape.value_bytes];
 
     for col in 0..shape.columns {
@@ -183,9 +242,13 @@ fn encode_tdb(
             }
             let g = g as usize;
             let base = col_base + j * partition;
-            tdb[base..base + FINGERPRINT_BYTES].copy_from_slice(&sorted_hashes[g].to_le_bytes());
+            let slot = &mut tdb[base..base + partition];
+            slot.fill(0); // clean valid slot (unused high bits stay 0)
+            write_bits(slot, pt, 0, FINGERPRINT_BITS, sorted_hashes[g]);
             fill_value(g, &mut valbuf);
-            tdb[base + FINGERPRINT_BYTES..base + partition].copy_from_slice(&valbuf);
+            for (k, &b) in valbuf.iter().enumerate() {
+                write_bits(slot, pt, FINGERPRINT_BITS + 8 * k, 8, b as u64);
+            }
         }
     }
     tdb
@@ -200,14 +263,14 @@ fn encode_tdb(
 /// run). The hint's on-wire size — the offline setup download the
 /// head-to-head reports — is `R·N·4` and is recorded analytically.
 fn assemble<R: RngCore>(
-    tdb: Vec<u8>,
+    tdb: Vec<u32>,
     sorted_hashes: &[u64],
     shape: MatrixShape,
     config: &SimpleConfig,
     seed: [u8; 16],
     rng: &mut R,
 ) -> (KpirServer, KpirClient) {
-    let params = config.to_params(seed);
+    let params = config.to_params(seed, shape.plaintext_bits);
     let inner =
         SimplePirServer::from_transposed_db(tdb, shape.response_dim(), shape.columns, params);
     let hint_wire_bytes =
@@ -242,7 +305,7 @@ pub fn build_synthetic<R: RngCore>(
     let mut hashes: Vec<u64> = (0..n as u64).map(|i| hash_key(&i.to_le_bytes())).collect();
     hashes.sort_unstable();
     hashes.dedup(); // hash collisions among distinct keys are ~impossible at n ≤ 2^30
-    let shape = MatrixShape::new(hashes.len(), value_bytes, epsilon);
+    let shape = MatrixShape::choose(hashes.len(), value_bytes, epsilon, config.sigma);
     let tdb = encode_tdb(&hashes, &shape, |g, buf| synthetic_value(hashes[g], buf));
     assemble(tdb, &hashes, shape, config, seed, rng)
 }
@@ -271,7 +334,7 @@ pub fn build_from_pairs<R: RngCore>(
         assert!(w[0].0 != w[1].0, "keyword fingerprint collision");
     }
     let hashes: Vec<u64> = items.iter().map(|(h, _)| *h).collect();
-    let shape = MatrixShape::new(hashes.len(), value_bytes, epsilon);
+    let shape = MatrixShape::choose(hashes.len(), value_bytes, epsilon, config.sigma);
     let tdb = encode_tdb(&hashes, &shape, |g, buf| {
         let v = items[g].1;
         let take = v.len().min(buf.len());
@@ -286,6 +349,41 @@ mod tests {
     use super::*;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// Bit-packing round-trips a fingerprint + value across cell boundaries
+    /// for several plaintext widths, and every cell stays in `[0, p)`.
+    #[test]
+    fn bitpack_roundtrip() {
+        let mut rng = StdRng::seed_from_u64(0xB17);
+        for pt in [8u32, 9, 10, 12, 14] {
+            for value_bytes in [1usize, 7, 16, 32, 100] {
+                let payload_bits = FINGERPRINT_BITS + 8 * value_bytes;
+                let partition = payload_bits.div_ceil(pt as usize);
+                let mut cells = vec![0u32; partition];
+                let fp = rng.next_u64();
+                let val: Vec<u8> = (0..value_bytes)
+                    .map(|_| (rng.next_u32() & 0xff) as u8)
+                    .collect();
+
+                write_bits(&mut cells, pt, 0, FINGERPRINT_BITS, fp);
+                for (k, &b) in val.iter().enumerate() {
+                    write_bits(&mut cells, pt, FINGERPRINT_BITS + 8 * k, 8, b as u64);
+                }
+                assert!(
+                    cells.iter().all(|&c| c < (1u32 << pt)),
+                    "cell overflow pt={pt}"
+                );
+                assert_eq!(read_bits(&cells, pt, 0, FINGERPRINT_BITS), fp, "fp pt={pt}");
+                for (k, &b) in val.iter().enumerate() {
+                    assert_eq!(
+                        read_bits(&cells, pt, FINGERPRINT_BITS + 8 * k, 8) as u8,
+                        b,
+                        "byte {k} pt={pt} vb={value_bytes}"
+                    );
+                }
+            }
+        }
+    }
 
     /// End-to-end: every present key retrieves its exact value; an absent
     /// key yields ⊥. This is the definitive correctness check — it

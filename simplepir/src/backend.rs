@@ -3,16 +3,17 @@
 //! # Purpose
 //!
 //! The three public types of the crate. [`SimplePirServer`] owns the
-//! column-major byte database and produces the [`Hint`] and per-query
-//! answers; [`SimplePirClient`] holds the LWE secret material and builds
-//! queries / recovers columns.
+//! column-major database and produces the [`Hint`] and per-query answers;
+//! [`SimplePirClient`] holds the LWE secret material and builds queries /
+//! recovers columns.
 //!
 //! # Layout
 //!
 //! The logical database `D` is `R × C` (`R` = response dimension,
 //! `C` = query dimension). It is stored **transposed** as `tdb`, a
-//! `C × R` row-major `u8` buffer (`tdb[c*R + r] = D[r][c]`), so the hot
-//! answer path `ans = D·qu` is one left-multiply `matvec(ans, tdb, qu)`.
+//! `C × R` row-major `u32` buffer (`tdb[c*R + r] = D[r][c]`, each cell in
+//! `[0, p)`), so the hot answer path `ans = D·qu` is one left-multiply
+//! `matvec(ans, tdb, qu)`.
 //! The public matrix `A ∈ Z_q^{C×N}` is expanded on demand from the seed
 //! in its transposed `N × C` form (`a_nc`), and never stored on the
 //! server or shipped to the client.
@@ -67,10 +68,11 @@ impl Hint {
     }
 }
 
-/// Row-KOPIR (SimplePIR) server: owns the transposed byte database.
+/// Row-KOPIR (SimplePIR) server: owns the transposed database.
 pub struct SimplePirServer {
-    /// Transposed database `tdb[c*R + r] = D[r][c]`, length `C·R`.
-    tdb: Vec<u8>,
+    /// Transposed database `tdb[c*R + r] = D[r][c]`, length `C·R`, each
+    /// cell a `Z_p` value in `[0, p)` (high `32 − plaintext_bits` bits zero).
+    tdb: Vec<u32>,
     rows: usize,
     cols: usize,
     params: SimpleParams,
@@ -80,19 +82,38 @@ impl SimplePirServer {
     /// Build a server from a database already stored **transposed**
     /// (`tdb`, `C × R` row-major, `tdb[c*rows + r] = D[r][c]`).
     ///
-    /// The keyword layer builds `tdb` directly (one `u8` per `Z_p` cell),
-    /// avoiding a second full-matrix copy.
+    /// The keyword layer builds `tdb` directly (one `u32` `Z_p` cell per
+    /// entry), avoiding a second full-matrix copy.
     ///
     /// # Constraints
     ///
-    /// Panics if `tdb.len() != rows * cols`.
+    /// Panics if `tdb.len() != rows * cols`. **Correctness guard:** panics
+    /// if the plaintext width is unsafe for this geometry — i.e. the answer
+    /// matvec sums `cols` cells and the chosen `p = 2^plaintext_bits`
+    /// violates the SimplePIR decode bound ([`crate::noise_bound_satisfied`]).
+    /// This backstops the adaptive operating-point selection: a bench (or
+    /// any caller) that hands in a too-wide `p` fails loudly rather than
+    /// silently mis-decoding. In debug builds also checks every cell lies in
+    /// `[0, p)`.
     pub fn from_transposed_db(
-        tdb: Vec<u8>,
+        tdb: Vec<u32>,
         rows: usize,
         cols: usize,
         params: SimpleParams,
     ) -> Self {
         assert_eq!(tdb.len(), rows * cols, "tdb shape mismatch");
+        assert!(
+            crate::params::noise_bound_satisfied(params.plaintext_bits, cols as u32, params.sigma),
+            "unsafe SimplePIR parameters: p = 2^{} over C = {cols} summed cells \
+             violates the δ = 2⁻⁴⁰ decode bound (σ = {}); choose a smaller plaintext_bits",
+            params.plaintext_bits,
+            params.sigma,
+        );
+        debug_assert!(
+            tdb.iter().all(|&c| c < params.plaintext_modulus()),
+            "database cell exceeds plaintext modulus p = 2^{}",
+            params.plaintext_bits,
+        );
         Self {
             tdb,
             rows,
@@ -263,16 +284,17 @@ impl SimplePirClient {
     }
 
     /// Recover the selected column: `d = ans − h_s`, rounded cell-wise to
-    /// plaintext bytes. Returns the `R` bytes of the column.
+    /// its plaintext `Z_p` value. Returns the `R` cells of the column (each
+    /// in `[0, p)`); the keyword layer unpacks these into records.
     ///
     /// # Constraints
     ///
     /// Panics if `ans.len() != R`.
-    pub fn recover(&self, ans: &[u32]) -> Vec<u8> {
+    pub fn recover(&self, ans: &[u32]) -> Vec<u32> {
         assert_eq!(ans.len(), self.rows, "answer length must equal R");
         ans.iter()
             .zip(&self.h_s)
-            .map(|(&a, &h)| crate::arith::round_q_to_p(a.wrapping_sub(h), &self.params) as u8)
+            .map(|(&a, &h)| crate::arith::round_q_to_p(a.wrapping_sub(h), &self.params))
             .collect()
     }
 }
@@ -289,10 +311,10 @@ mod tests {
     fn recovers_selected_column() {
         let mut rng = StdRng::seed_from_u64(0xA11CE);
         let (rows, cols) = (170usize, 211usize);
-        // Random byte DB in transposed layout.
-        let mut tdb = vec![0u8; rows * cols];
+        // Random Z_p DB (p = 256) in transposed layout, each cell in [0, p).
+        let mut tdb = vec![0u32; rows * cols];
         for c in tdb.iter_mut() {
-            *c = (rng.next_u32() & 0xff) as u8;
+            *c = rng.next_u32() & 0xff;
         }
         // Reference D[r][c] from tdb[c*rows + r].
         let d = |r: usize, c: usize| tdb[c * rows + r];
@@ -306,9 +328,47 @@ mod tests {
             let qu = client.query(col, &mut rng);
             let ans = server.answer(&qu);
             let got = client.recover(&ans);
-            let want: Vec<u8> = (0..rows).map(|r| d(r, col)).collect();
+            let want: Vec<u32> = (0..rows).map(|r| d(r, col)).collect();
             assert_eq!(got, want, "column {col} mismatch");
         }
+    }
+
+    /// Recovers a wider plaintext (`p = 2^10`) exactly — exercises the
+    /// adaptive-width path, not just the `mpc4j` byte case.
+    #[test]
+    fn recovers_wide_plaintext() {
+        let mut rng = StdRng::seed_from_u64(0xD00D);
+        let (rows, cols) = (64usize, 96usize);
+        let pb = 10u32;
+        let p = 1u32 << pb;
+        let mut tdb = vec![0u32; rows * cols];
+        for c in tdb.iter_mut() {
+            *c = rng.next_u32() % p;
+        }
+        let d = |r: usize, c: usize| tdb[c * rows + r];
+        let params = SimpleParams::new(512, pb, 6.4, [2u8; 16]);
+        let server = SimplePirServer::from_transposed_db(tdb.clone(), rows, cols, params.clone());
+        let hint = server.setup();
+        let client = SimplePirClient::new(&hint, params, &mut rng);
+        for &col in &[0usize, 5, cols - 1] {
+            let qu = client.query(col, &mut rng);
+            let ans = server.answer(&qu);
+            let got = client.recover(&ans);
+            let want: Vec<u32> = (0..rows).map(|r| d(r, col)).collect();
+            assert_eq!(got, want, "wide column {col} mismatch");
+        }
+    }
+
+    /// The correctness guard fires when the plaintext width is too large
+    /// for the summed dimension.
+    #[test]
+    #[should_panic(expected = "unsafe SimplePIR parameters")]
+    fn guard_rejects_unsafe_plaintext_bits() {
+        let (rows, cols) = (16usize, 20000usize);
+        let tdb = vec![0u32; rows * cols];
+        // p = 2^20 over 20k summed cells at σ = 6.4 blows past Δ/2.
+        let params = SimpleParams::new(1275, 20, 6.4, [0u8; 16]);
+        let _ = SimplePirServer::from_transposed_db(tdb, rows, cols, params);
     }
 
     /// The fast co-located client (`with_local_server`) recovers exactly
@@ -317,9 +377,9 @@ mod tests {
     fn local_server_client_matches_hint_client() {
         let mut rng = StdRng::seed_from_u64(0xBEE5);
         let (rows, cols) = (48usize, 71usize);
-        let mut tdb = vec![0u8; rows * cols];
+        let mut tdb = vec![0u32; rows * cols];
         for c in tdb.iter_mut() {
-            *c = (rng.next_u32() & 0xff) as u8;
+            *c = rng.next_u32() & 0xff;
         }
         let params = SimpleParams::new(384, 8, 6.4, [5u8; 16]);
         let server = SimplePirServer::from_transposed_db(tdb, rows, cols, params.clone());
@@ -338,7 +398,7 @@ mod tests {
     #[test]
     fn hint_wire_size() {
         let (rows, cols, n) = (10usize, 12usize, 64u32);
-        let tdb = vec![0u8; rows * cols];
+        let tdb = vec![0u32; rows * cols];
         let params = SimpleParams::new(n, 8, 6.4, [0u8; 16]);
         let server = SimplePirServer::from_transposed_db(tdb, rows, cols, params);
         let hint = server.setup();

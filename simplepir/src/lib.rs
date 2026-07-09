@@ -9,12 +9,14 @@
 //! 2023). It is the standard index-PIR primitive underneath `KPIR^index`
 //! (see the [`kpir-index`](../kpir_index/index.html) crate).
 //!
-//! The database is a byte matrix `D ∈ Z_p^{R×C}` (`p = 256`). A query
-//! privately selects one **column** `col ∈ [C)`; the answer returns the
-//! whole column — all `R` entries — which the keyword layer then scans.
-//! This is the transpose of the paper's row-retrieval presentation
-//! (Figure 2) and matches the `mpc4j` reference (`SimpleCpIdxPir` /
-//! `SimplePgmCpKsPir`, which encrypt a column selector).
+//! The database is a matrix `D ∈ Z_p^{R×C}` of `u32` cells, each in
+//! `[0, p)` where `p = 2^plaintext_bits` is chosen adaptively per geometry
+//! (see [`noise_bound_satisfied`]). A query privately selects one
+//! **column** `col ∈ [C)`; the answer returns the whole column — all `R`
+//! entries — which the keyword layer then scans. This is the transpose of
+//! the paper's row-retrieval presentation (Figure 2) and matches the
+//! `mpc4j` reference (`SimpleCpIdxPir` / `SimplePgmCpKsPir`, which encrypt
+//! a column selector).
 //!
 //! # Protocol (all arithmetic mod `q = 2^32`, native `u32` wraparound)
 //!
@@ -32,10 +34,9 @@
 //! # Design / architecture
 //!
 //! - `q = 2^32` is implicit via native `u32` wraparound.
-//! - The DB is stored **transposed** (`C × R`, row-major, `u8`) so that
+//! - The DB is stored **transposed** (`C × R`, row-major, `u32`) so that
 //!   the hot answer path `D·qu` is a single left-multiply through the
-//!   shared [`matvec`] kernel, and `u8` storage keeps the (potentially
-//!   multi-GiB) matrix compact.
+//!   shared [`matvec`] kernel.
 //! - No threads, no explicit SIMD, no external linear-algebra crate — the
 //!   math is hand-rolled `u32`, matching the RisePIR reference repo so
 //!   head-to-head benchmark numbers are measured under the same model.
@@ -46,7 +47,7 @@
 //! - `matvec.rs`  — the shared `acc += qᵀ·D` kernel.
 //! - `sampler.rs` — `A` expansion, uniform-`Z_q` secret, discrete Gaussian.
 //! - `arith.rs`   — the recover rounding `Round_Δ`.
-//! - `params.rs`  — [`SimpleParams`] / [`SimpleConfig`].
+//! - `params.rs`  — [`SimpleParams`] / [`SimpleConfig`] / [`noise_bound_satisfied`].
 #![warn(missing_docs)]
 
 mod arith;
@@ -56,4 +57,4 @@ mod params;
 mod sampler;
 
 pub use backend::{Hint, SimplePirClient, SimplePirServer};
-pub use params::{SimpleConfig, SimpleParams};
+pub use params::{noise_bound_satisfied, SimpleConfig, SimpleParams, MAX_PLAINTEXT_BITS};

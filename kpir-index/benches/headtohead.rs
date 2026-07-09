@@ -45,7 +45,7 @@ fn run(cli: &helpers::Cli) {
     let map_bytes = client.map_wire_bytes();
 
     println!(
-        "KPIR^index  m={}  l={}B  N={}  eps={}\n  \
+        "KPIR^index  m={}  l={}B  N={}  eps={}  pt={}\n  \
          matrix: {}x{} (data_rows={}, rows={}, partition={})  expansion={:.3}\n  \
          Qry={}  Rsp={}  Ans={:.2} ms ({:.1} ans/s)\n  \
          setup hint={}  client map={} ({} segments)",
@@ -53,6 +53,7 @@ fn run(cli: &helpers::Cli) {
         cli.value_bytes,
         cli.lwe_dim,
         cli.epsilon,
+        shape.plaintext_bits,
         shape.columns,
         shape.response_dim(),
         shape.data_rows,
@@ -70,17 +71,18 @@ fn run(cli: &helpers::Cli) {
 
     let mut csv = helpers::csv_writer(
         "kpir_headtohead",
-        "scheme,m,value_bytes,epsilon,lwe_dim,columns,data_rows,rows,partition,\
+        "scheme,m,value_bytes,epsilon,lwe_dim,plaintext_bits,columns,data_rows,rows,partition,\
          query_bytes,response_bytes,hint_bytes,map_bytes,num_segments,expansion,\
          mean_ans_ms,answers_per_sec,min_ans_per_sec,max_ans_per_sec,stddev_ans_per_sec",
     );
     writeln!(
         csv,
-        "kpir_index,{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{:.2},{:.2},{:.2},{:.2}",
+        "kpir_index,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.4},{:.4},{:.2},{:.2},{:.2},{:.2}",
         cli.m,
         cli.value_bytes,
         cli.epsilon,
         cli.lwe_dim,
+        shape.plaintext_bits,
         shape.columns,
         shape.data_rows,
         shape.rows,

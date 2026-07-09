@@ -19,10 +19,10 @@
 //!
 //! # Design / architecture
 //!
-//! - **Generic over the cell type** ([`Cell`]): the database is `u8`
-//!   (`p = 256`, keeps a multi-GiB matrix compact) while `A` / `hint`
-//!   are `u32`. Monomorphisation gives each a tight loop; `u8` cells
-//!   widen to `u32` before the multiply.
+//! - **All `u32`.** Database, query, `A`, and `hint` are every one `u32`
+//!   in `Z_q` (`q = 2³²`); the database cells additionally lie in `[0, p)`
+//!   (high bits zero), which keeps the `u32` accumulator faithful to the
+//!   mod-`q` sum. Matches RisePIR's plain-`u32` kernel.
 //! - **Register blocking.** `R` rows per pass; `R` is the largest power
 //!   of two `≤ 16` whose block footprint `R·width` stays within 2048
 //!   cells.
@@ -31,26 +31,6 @@
 //!   for any `R`. Pinned by the unit tests.
 //! - **Constant-time schedule.** No data-dependent branches or indices —
 //!   the loop shape depends only on the public `(rows, width)`.
-
-/// A matrix cell that widens to `u32` for the LWE multiply.
-///
-/// Implemented for `u8` (database, `p ≤ 256`) and `u32` (`A`, `hint`).
-pub(crate) trait Cell: Copy {
-    /// Zero-extend the cell to `u32`.
-    fn widen(self) -> u32;
-}
-impl Cell for u8 {
-    #[inline(always)]
-    fn widen(self) -> u32 {
-        self as u32
-    }
-}
-impl Cell for u32 {
-    #[inline(always)]
-    fn widen(self) -> u32 {
-        self
-    }
-}
 
 /// Fold `qᵀ · D` into `acc` (all arithmetic mod `2³²`).
 ///
@@ -65,22 +45,22 @@ impl Cell for u32 {
 /// # Complexity
 ///
 /// `Θ(q.len() · acc.len())` wrapping multiply-adds.
-pub(crate) fn matvec_accumulate<C: Cell>(acc: &mut [u32], d: &[C], q: &[u32]) {
+pub(crate) fn matvec_accumulate(acc: &mut [u32], d: &[u32], q: &[u32]) {
     debug_assert_eq!(d.len(), q.len() * acc.len(), "matvec shape mismatch");
     match acc.len() {
         0 => (),
-        1..=128 => block_pass::<C, 16>(acc, d, q),
-        129..=256 => block_pass::<C, 8>(acc, d, q),
-        257..=512 => block_pass::<C, 4>(acc, d, q),
-        513..=1024 => block_pass::<C, 2>(acc, d, q),
-        _ => block_pass::<C, 1>(acc, d, q),
+        1..=128 => block_pass::<16>(acc, d, q),
+        129..=256 => block_pass::<8>(acc, d, q),
+        257..=512 => block_pass::<4>(acc, d, q),
+        513..=1024 => block_pass::<2>(acc, d, q),
+        _ => block_pass::<1>(acc, d, q),
     }
 }
 
 /// One monomorphised blocking level: fold `R` rows per pass over `acc`,
 /// then the `q.len() mod R` tail rows one at a time.
 #[inline]
-fn block_pass<C: Cell, const R: usize>(acc: &mut [u32], d: &[C], q: &[u32]) {
+fn block_pass<const R: usize>(acc: &mut [u32], d: &[u32], q: &[u32]) {
     let width = acc.len();
     let n = q.len();
     if width == 0 || n == 0 {
@@ -93,7 +73,7 @@ fn block_pass<C: Cell, const R: usize>(acc: &mut [u32], d: &[C], q: &[u32]) {
         for j in 0..width {
             let mut x = acc[j];
             for r in 0..R {
-                x = x.wrapping_add(qs[r].wrapping_mul(block[r * width + j].widen()));
+                x = x.wrapping_add(qs[r].wrapping_mul(block[r * width + j]));
             }
             acc[j] = x;
         }
@@ -102,7 +82,7 @@ fn block_pass<C: Cell, const R: usize>(acc: &mut [u32], d: &[C], q: &[u32]) {
     // Tail rows: identical arithmetic → bit-for-bit match with the naive loop.
     for (row, &qi) in d[full * width..].chunks_exact(width).zip(&q[full..]) {
         for (x, &cell) in acc.iter_mut().zip(row) {
-            *x = x.wrapping_add(qi.wrapping_mul(cell.widen()));
+            *x = x.wrapping_add(qi.wrapping_mul(cell));
         }
     }
 }
@@ -120,11 +100,11 @@ mod tests {
         }
     }
 
-    fn naive<C: Cell>(acc: &mut [u32], d: &[C], q: &[u32]) {
+    fn naive(acc: &mut [u32], d: &[u32], q: &[u32]) {
         let width = acc.len();
         for (i, &qi) in q.iter().enumerate() {
             for j in 0..width {
-                acc[j] = acc[j].wrapping_add(qi.wrapping_mul(d[i * width + j].widen()));
+                acc[j] = acc[j].wrapping_add(qi.wrapping_mul(d[i * width + j]));
             }
         }
     }
@@ -156,23 +136,29 @@ mod tests {
         }
     }
 
-    /// The `u8`-matrix path (the database) matches a naive `u8` loop and
-    /// also matches the `u32` kernel on the widened cells.
+    /// The database path uses `Z_p`-bounded cells (high bits zero); it
+    /// still matches the naive loop at the DB-shaped geometries.
     #[test]
-    fn matches_naive_u8_matrix() {
+    fn matches_naive_bounded_cells() {
         let shapes = [(16usize, 40usize), (129, 129), (73, 264), (43, 1032)];
         for (n, width) in shapes {
-            let mut d32 = vec![0u32; n * width];
+            let mut d = vec![0u32; n * width];
             let mut q = vec![0u32; n];
-            fill_pseudorandom(&mut d32, 0x51A7_0000 ^ width as u32);
+            fill_pseudorandom(&mut d, 0x51A7_0000 ^ width as u32);
             fill_pseudorandom(&mut q, 0x0DD0_0000 | n as u32);
-            let d8: Vec<u8> = d32.iter().map(|&x| (x & 0xff) as u8).collect();
+            // Bound the DB cells to [0, 512) as the p = 2^9 path would.
+            for cell in &mut d {
+                *cell &= 0x1ff;
+            }
 
             let mut expected = vec![0u32; width];
-            naive(&mut expected, &d8, &q);
+            naive(&mut expected, &d, &q);
             let mut got = vec![0u32; width];
-            matvec_accumulate(&mut got, &d8, &q);
-            assert_eq!(got, expected, "u8 mismatch at n={n} width={width}");
+            matvec_accumulate(&mut got, &d, &q);
+            assert_eq!(
+                got, expected,
+                "bounded-cell mismatch at n={n} width={width}"
+            );
         }
     }
 

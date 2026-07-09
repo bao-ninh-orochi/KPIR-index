@@ -37,10 +37,11 @@ fn main() {
     );
 
     println!(
-        "kpir_decode  m={} l={}B N={}  Dec={:.4} ms ({:.1} dec/s)  R={} cells",
+        "kpir_decode  m={} l={}B N={} pt={}  Dec={:.4} ms ({:.1} dec/s)  R={} cells",
         cli.m,
         cli.value_bytes,
         cli.lwe_dim,
+        shape.plaintext_bits,
         stats.mean_ms(),
         stats.mean_ops,
         shape.response_dim(),
@@ -48,16 +49,17 @@ fn main() {
 
     let mut csv = helpers::csv_writer(
         "kpir_decode",
-        "scheme,m,value_bytes,epsilon,lwe_dim,response_cells,\
+        "scheme,m,value_bytes,epsilon,lwe_dim,plaintext_bits,response_cells,\
          mean_decode_ms,mean_dps,min_dps,max_dps,stddev_dps",
     );
     writeln!(
         csv,
-        "kpir_index,{},{},{},{},{},{:.6},{:.2},{:.2},{:.2},{:.2}",
+        "kpir_index,{},{},{},{},{},{},{:.6},{:.2},{:.2},{:.2},{:.2}",
         cli.m,
         cli.value_bytes,
         cli.epsilon,
         cli.lwe_dim,
+        shape.plaintext_bits,
         shape.response_dim(),
         stats.mean_ms(),
         stats.mean_ops,

@@ -31,10 +31,11 @@ fn main() {
     );
 
     println!(
-        "kpir_answer  m={} l={}B N={}  Ans={:.2} ms ({:.1} ans/s)  Qry={} Rsp={}",
+        "kpir_answer  m={} l={}B N={} pt={}  Ans={:.2} ms ({:.1} ans/s)  Qry={} Rsp={}",
         cli.m,
         cli.value_bytes,
         cli.lwe_dim,
+        shape.plaintext_bits,
         stats.mean_ms(),
         stats.mean_ops,
         helpers::fmt_bytes(shape.query_bytes()),
@@ -43,16 +44,17 @@ fn main() {
 
     let mut csv = helpers::csv_writer(
         "kpir_answer",
-        "scheme,m,value_bytes,epsilon,lwe_dim,columns,rows,partition,\
+        "scheme,m,value_bytes,epsilon,lwe_dim,plaintext_bits,columns,rows,partition,\
          query_bytes,response_bytes,mean_ans_ms,mean_qps,min_qps,max_qps,stddev_qps",
     );
     writeln!(
         csv,
-        "kpir_index,{},{},{},{},{},{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2}",
+        "kpir_index,{},{},{},{},{},{},{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2}",
         cli.m,
         cli.value_bytes,
         cli.epsilon,
         cli.lwe_dim,
+        shape.plaintext_bits,
         shape.columns,
         shape.rows,
         shape.partition,
