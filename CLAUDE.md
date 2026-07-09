@@ -8,7 +8,10 @@ repo conventions so numbers are measured under the same model.
 
 ## Workspace
 
-Two crates, dependency direction `kpir-index → simplepir`:
+Two crates, dependency direction `kpir-index → simplepir`. Each crate has a
+`README.md` (referenced from its `Cargo.toml`); the root `README.md` carries
+the measured head-to-head row, the fairness/measurement model, and the
+security notice.
 
 - **`simplepir`** — Row-KOPIR (SimplePIR) index-PIR backend. Owns all LWE math.
   - `params.rs` — `SimpleParams` (runtime) / `SimpleConfig` (user knobs). Split
@@ -17,8 +20,11 @@ Two crates, dependency direction `kpir-index → simplepir`:
     `noise_bound_satisfied` is the SimplePIR Gaussian decode bound
     (`Δ ≥ 2√2·σ·√(ln(2/δ))·p·√C`, `δ = 2⁻⁴⁰`, `MAX_PLAINTEXT_BITS = 14`).
   - `matvec.rs` — the shared register-blocked `acc += qᵀ·D` kernel; all `u32`
-    (DB cells in `[0, p)`). Bit-exact, single-thread, no explicit SIMD. Ported
-    from RisePIR.
+    (DB cells in `[0, p)`). Bit-exact, single-thread, no explicit SIMD.
+    **Bit-identical port of RisePIR's kernel** (`ikpir-common` commit
+    `dc2dd04`): same width-adaptive dispatch (largest power-of-two `R ≤ 16`
+    with `R·width ≤ 2048` cells). This is a fairness invariant — never let the
+    two kernels diverge.
   - `sampler.rs` — ChaCha-seeded `A` expansion (transposed `N×C` layout),
     uniform-`Z_q` secret, Box–Muller discrete Gaussian.
   - `arith.rs` — `round_q_to_p` (`Round_Δ`), width-generic (matches `mpc4j`'s
@@ -40,6 +46,9 @@ Two crates, dependency direction `kpir-index → simplepir`:
     `KpirServer` / `KpirClient`.
   - `benches/` — `helpers.rs` (shared via `#[path]`), `headtohead`, `kpir_answer`,
     `kpir_query`, `kpir_decode`.
+  - `tests/proptests.rs` — property tests over the public API: end-to-end
+    roundtrip on arbitrary pairs, PLA extract guarantee, `MatrixShape`
+    defining inequalities, `choose` maximality.
 
 ## Load-bearing facts (do not regress)
 
@@ -61,7 +70,8 @@ Two crates, dependency direction `kpir-index → simplepir`:
   bit-packed LSB-first into `partition` `pt`-bit cells (⊥ = every cell `p − 1`,
   which reads back as fingerprint `u64::MAX`). Boundary rows carry neighbouring
   columns' edges; the PLA's `ε+1` effective error is covered by the `ε+1`/`ε+2`
-  padding — pinned by the end-to-end test (which now runs at `pt = 10`).
+  padding — pinned by the end-to-end test (which now runs at `pt = 10`) and the
+  `tests/proptests.rs` roundtrip.
 - **Row-KOPIR is column-selection** (transpose of the paper's Figure 2), matching
   `mpc4j`: query length = `C`, response length = `R`. `hint = D·A`.
 - **`with_local_server` == `new(hint)`**: the fast client computes `hint·s` as
@@ -73,13 +83,29 @@ Two crates, dependency direction `kpir-index → simplepir`:
 ## Commands
 
 ```bash
-cargo test --workspace                          # unit + doctests
+cargo test --workspace                          # unit + doc + property tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
+cargo doc --workspace --no-deps                 # rustdoc must stay warning-free
 ./scripts/smoke.sh                              # correctness-gated smoke of every bench
 ./scripts/headtohead.sh                         # CANS2026 Table 3 sweep
 ./scripts/bench.sh kpir_answer --m 1000000 --value-bytes 256
 ```
+
+## Benching gotchas
+
+- The `ℓ = 1024 B, m = 10⁶` config allocates a **5.7 GiB** `u32` database.
+  On a 16 GiB machine the answer measurement is memory-compression-bound
+  (~1.8 s instead of ~170 ms of compute) — treat that row as
+  hardware-limited, don't "fix" the kernel. When the DB fits in RAM the
+  kernel streams at ~34 GB/s on Apple M1 (verified at `--m 300000`).
+- Never run builds or other memory-heavy work concurrently with a sweep;
+  it visibly degrades the measured bandwidth.
+- Bench CSVs append; the schema gained a `plaintext_bits` column with the
+  adaptive-width change. Archive (don't mix) old-schema CSVs — see
+  `results/kpir-index/archive-pre-adaptive/` (local only, gitignored),
+  whose rows also predate the `u32`-cell model (4× less memory traffic, so
+  their latencies are not comparable).
 
 ## Conventions
 
@@ -93,3 +119,10 @@ cargo fmt --all --check
   module, not a target). Communication = fixed-width LE wire bytes; `A` excluded
   from the hint (regenerated from seed).
 - Every bench gates on `helpers::verify` before reporting numbers.
+- `smoke.sh` writes to `results/.smoke/` (its own scratch base, cleared at
+  start and end) — it must never touch the real `results/kpir-index/` CSVs.
+- CI mirrors RisePIR: three jobs (fmt / clippy / test) on
+  `dtolnay/rust-toolchain@1.85.0` + `Swatinem/rust-cache@v2`, plus a bench
+  build and `smoke.sh` in the test job.
+- Dual-licensed `MIT OR Apache-2.0`: `LICENSE-APACHE` + `LICENSE-MIT` both
+  exist and the `license` field must stay in sync with them.

@@ -12,6 +12,9 @@ debug
 /simplepir/results/
 /kpir-index/results/
 
+# cargo-mutants output
+**/mutants.out*/
+
 # Editors / OS
 .DS_Store
 *.swp

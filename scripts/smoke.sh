@@ -7,8 +7,11 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-export KPIR_RESULTS_DIR="${KPIR_RESULTS_BASE:-$KPIR_ROOT/results/.smoke}/kpir-index"
-rm -rf "$KPIR_RESULTS_DIR"
+# Write to a throwaway base so smoke's tiny rows never touch the real
+# results/kpir-index/ CSVs (benches append). Cleared at start and end.
+SMOKE_BASE="$KPIR_ROOT/results/.smoke"
+export KPIR_RESULTS_DIR="$SMOKE_BASE/kpir-index"
+rm -rf "$SMOKE_BASE"
 mkdir -p "$KPIR_RESULTS_DIR"
 
 ARGS=(--m 20000 --value-bytes 32 --lwe-dim 512 --epsilon 4 --samples 3 --batch 4)
@@ -21,4 +24,5 @@ for b in "${BENCHES[@]}"; do
         die "$b failed"
     fi
 done
+rm -rf "$SMOKE_BASE"
 ok "smoke passed"

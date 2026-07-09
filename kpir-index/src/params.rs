@@ -97,7 +97,7 @@ impl MatrixShape {
             .checked_mul(partition as u64)
             .expect("n·partition overflow");
         let columns = ceil_sqrt(cells) as usize;
-        let data_rows = div_ceil(n, columns).max(epsilon as usize + 2);
+        let data_rows = n.div_ceil(columns).max(epsilon as usize + 2);
         let rows = data_rows + 2 * epsilon as usize + 3;
         Self {
             n,
@@ -176,12 +176,6 @@ fn ceil_sqrt(x: u64) -> u64 {
     } else {
         s + 1
     }
-}
-
-/// `ceil(a / b)` for positive `b`.
-#[inline]
-fn div_ceil(a: usize, b: usize) -> usize {
-    a.div_ceil(b)
 }
 
 #[cfg(test)]

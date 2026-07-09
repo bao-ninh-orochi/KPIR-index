@@ -36,7 +36,7 @@
 //! - `q = 2^32` is implicit via native `u32` wraparound.
 //! - The DB is stored **transposed** (`C × R`, row-major, `u32`) so that
 //!   the hot answer path `D·qu` is a single left-multiply through the
-//!   shared [`matvec`] kernel.
+//!   shared `matvec` kernel (private module; see `matvec.rs`).
 //! - No threads, no explicit SIMD, no external linear-algebra crate — the
 //!   math is hand-rolled `u32`, matching the RisePIR reference repo so
 //!   head-to-head benchmark numbers are measured under the same model.

@@ -1,12 +1,15 @@
 [package]
 name        = "kpir-index"
-version     = "0.1.0"
+version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 authors.workspace      = true
 repository.workspace   = true
 license.workspace      = true
 description = "KPIR^index keyword PIR (Hao et al., USENIX Sec'25) — core logic + head-to-head benchmarks"
+readme      = "README.md"
+keywords    = ["pir", "keyword-pir", "private-information-retrieval", "pgm-index", "lwe"]
+categories  = ["cryptography"]
 # `benches/helpers.rs` is a shared module included via `#[path]`, not a bench
 # target; disable auto-discovery and list the real benches explicitly.
 autobenches = false

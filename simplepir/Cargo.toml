@@ -1,12 +1,15 @@
 [package]
 name        = "simplepir"
-version     = "0.1.0"
+version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 authors.workspace      = true
 repository.workspace   = true
 license.workspace      = true
 description = "Row-KOPIR (SimplePIR) single-server index PIR backend — core logic for the KPIR^index re-implementation"
+readme      = "README.md"
+keywords    = ["pir", "private-information-retrieval", "lwe", "simplepir"]
+categories  = ["cryptography"]
 
 [lints]
 workspace = true
