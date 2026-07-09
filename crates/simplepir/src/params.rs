@@ -21,6 +21,28 @@
 //! largest `plaintext_bits` that still satisfies [`noise_bound_satisfied`]
 //! — matching RisePIR so the two schemes are benchmarked at the same
 //! operating point.
+//!
+//! # Correctness bound: the non-square correction
+//!
+//! SimplePIR's published decode bound (Henzinger et al., USENIX Sec'23,
+//! Thm C.1) reads `⌊q/p⌋ ≥ √2·σ·p·N^(1/4)·√(ln(2/δ))`. The `N^(1/4)`
+//! there is `√(√N)` **only because the paper assumes a square `√N×√N`
+//! database** — each output noise coordinate then sums over exactly `√N`
+//! cells. KPIR^index matrices are **not** square: the encoded DB is
+//! `R × C` with `C = ⌈√(n·partition)⌉` (query/upload dim) and
+//! `R = rows·partition` (response/download dim). The online answer
+//! `ans = D·qu` makes each output coordinate `Σ_{c<C} D[r,c]·e[c]` — a
+//! sum over the **`C` columns**, since the query error `e` has length `C`
+//! — so the noise-summation dimension is `C`, and the paper's `N^(1/4)`
+//! must be replaced by `√C`. A second adjustment (`2√2` vs the paper's
+//! `√2`) covers cells living in `[0, p)` rather than centered
+//! `[−p/2, p/2)`. Both are baked into [`noise_bound_satisfied`], and the
+//! backend guard ([`crate::SimplePirServer::from_transposed_db`])
+//! re-checks the same predicate.
+//!
+//! With these corrections the adaptive selector (`kpir-index`'s
+//! `MatrixShape::choose`) picks `plaintext_bits = 9 / 9 / 8` for
+//! `ℓ = 32 / 256 / 1024 B` at `m = 10⁶` (`σ = 6.4`), matching RisePIR-S.
 
 /// SimplePIR decode-failure budget `δ = 2⁻⁴⁰` (the value SimplePIR §4.2
 /// instantiates), used by the [`noise_bound_satisfied`] correctness bound.
@@ -45,7 +67,11 @@ pub const MAX_PLAINTEXT_BITS: u32 = 14;
 /// in `[0, p)`: the worst-case database-row norm is `p·√dim`, not
 /// `(p/2)·√dim`. `summation_dim` is the number of cells the online answer
 /// accumulates — for Row-KOPIR the query dimension `C` (the answer
-/// `ans = D·qu` sums over the `C` columns).
+/// `ans = D·qu` sums over the `C` columns). Using `√summation_dim` here,
+/// rather than the paper's `N^(1/4) = √(√N)`, is the **non-square**
+/// correction: `N^(1/4)` is only the summed-cell count for a square
+/// `√N×√N` matrix, which KPIR^index's `R×C` geometry is not (see the
+/// module docs).
 ///
 /// This is the single source of truth shared by the backend guard
 /// ([`crate::SimplePirServer::from_transposed_db`]) and the `kpir-index`
