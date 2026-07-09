@@ -98,6 +98,8 @@ cargo doc --workspace --no-deps --open
 | [`crates/kpir-index/`](crates/kpir-index/README.md) | The keyword scheme: PLA, matrix geometry, bit-packed encoding, query/answer/recover glue, benches, property tests |
 | [`scripts/`](scripts/) | `bench.sh` (one bench, one config) · `headtohead.sh` (Table 3 sweep) · `smoke.sh` (correctness-gated tiny run of every bench) · `lib.sh` (shared) |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | fmt · clippy `-D warnings` · tests · bench build · smoke, on the pinned 1.85.0 toolchain |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Toolchain pin, local gates, bench workflow, PR conventions |
+| [`SECURITY.md`](SECURITY.md) | Prototype threat-model caveats and private vulnerability reporting |
 | `results/` | Bench CSVs (gitignored; append-per-run) |
 
 ## Parameters
