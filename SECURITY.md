@@ -16,11 +16,14 @@ Known, deliberate limitations of the prototype:
   must add — and independently harden — its own encoding and transport.
 - **Side-channel posture is best-effort, not audited.** The LWE matrix-vector
   kernel's schedule is data-independent — it depends only on the public matrix
-  shape, never on secret query or database values. But the samplers are not
-  constant-time, secrets are not zeroized, and the `recover` decode path scans
-  candidate fingerprints with a plain early-returning compare (not a branchless
-  one). A fully constant-time-audited decode is explicitly out of scope for this
-  prototype.
+  shape, never on secret query or database values. The `recover` decode scans
+  *all* candidate slots of the retrieved column and merges the value via a
+  branchless OR-masked select (`ct_eq_u64_mask`), so its probe path is
+  independent of which slot (if any) matches — a co-located timing observer
+  learns nothing beyond the public geometry. This is best-effort hand-rolled
+  masking, **not** a formally verified constant-time guarantee: the samplers are
+  not constant-time, secrets are not zeroized, and the underlying SimplePIR LWE
+  decode is a separate, un-audited concern.
 - **`hash_key` is xxh3, not a cryptographic hash.** It is a near-uniform,
   near-injective keyword→coordinate map — all the scheme requires — **not** a
   cryptographic commitment. Swap in a keyed/cryptographic hash before any

@@ -72,6 +72,12 @@ security notice.
   columns' edges; the PLA's `ε+1` effective error is covered by the `ε+1`/`ε+2`
   padding — pinned by the end-to-end test (which now runs at `pt = 10`) and the
   `tests/proptests.rs` roundtrip.
+- **Constant-time decode** (`KpirClient::recover`): a **branchless full-column
+  scan** — it visits all `rows` slots and OR-masks the value into a fixed
+  accumulator via `ct_eq_u64_mask` (port of RisePIR's `ct_eq_u32_mask`), so the
+  probe path leaks no matched-row timing. **Do not reintroduce an early return
+  / `if fp == want`.** Best-effort (not verified); the underlying SimplePIR LWE
+  decode is a separate concern. Mirrors `ikpir-client`'s `decode`.
 - **Row-KOPIR is column-selection** (transpose of the paper's Figure 2), matching
   `mpc4j`: query length = `C`, response length = `R`. `hint = D·A`.
 - **`with_local_server` == `new(hint)`**: the fast client computes `hint·s` as

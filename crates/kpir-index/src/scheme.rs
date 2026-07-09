@@ -118,25 +118,52 @@ impl KpirClient {
     }
 
     /// Recover the value for `key` from a server answer, or `None` (`⊥`)
-    /// if `key` is absent. Scans the retrieved column's candidate entries
-    /// for the fingerprint match.
+    /// if `key` is absent.
+    ///
+    /// # Rationale
+    ///
+    /// **Side-channel hardening.** Every one of the `rows` candidate slots in
+    /// the retrieved column is unpacked and merged into a fixed-size
+    /// accumulator via a branchless OR-masked select (`ct_eq_u64_mask`): the
+    /// scan runs the full `0..rows` regardless of where — or whether — the
+    /// fingerprint matches, and no value byte is read conditionally. The probe
+    /// path is therefore independent of the matched row, so a co-located timing
+    /// observer learns nothing beyond the public geometry `(rows, partition)`.
+    /// This is best-effort hand-rolled masking, not a formally verified
+    /// constant-time guarantee; the underlying SimplePIR LWE decode
+    /// ([`SimplePirClient::recover`](simplepir::SimplePirClient::recover)) is a
+    /// separate, un-audited concern.
+    ///
+    /// **Fingerprint-collision behaviour.** The returned value is the bitwise
+    /// OR of every matching slot's bytes. Stored fingerprints are globally
+    /// distinct (enforced at build time) and boundary-replicated copies of an
+    /// entry are byte-identical, so at most one *distinct* value is ever OR'd
+    /// in; empty slots read back as `u64::MAX` and never match a real key hash.
     pub fn recover(&self, key: &[u8], ans: &[u32]) -> Option<Vec<u8>> {
         let want = hash_key(key);
         let cells = self.inner.recover(ans);
         let partition = self.shape.partition;
         let pt = self.shape.plaintext_bits;
+
+        // Accumulator allocated up front so the memory path is data-independent.
+        let mut acc = vec![0u8; self.shape.value_bytes];
+        let mut found: u64 = 0;
         for j in 0..self.shape.rows {
             let slot = &cells[j * partition..(j + 1) * partition];
             let fp = read_bits(slot, pt, 0, FINGERPRINT_BITS);
-            if fp == want {
-                let mut val = vec![0u8; self.shape.value_bytes];
-                for (k, b) in val.iter_mut().enumerate() {
-                    *b = read_bits(slot, pt, FINGERPRINT_BITS + 8 * k, 8) as u8;
-                }
-                return Some(val);
+            let mask = ct_eq_u64_mask(fp, want); // all-ones if equal, else 0
+            let mask8 = (mask & 0xFF) as u8;
+            for (k, a) in acc.iter_mut().enumerate() {
+                let byte = read_bits(slot, pt, FINGERPRINT_BITS + 8 * k, 8) as u8;
+                *a |= mask8 & byte;
             }
+            found |= mask;
         }
-        None
+        if found != 0 {
+            Some(acc)
+        } else {
+            None
+        }
     }
 
     /// The encoded-database geometry.
@@ -166,6 +193,19 @@ impl KpirClient {
 
 /// Fingerprint width in bits (`FINGERPRINT_BYTES · 8`).
 const FINGERPRINT_BITS: usize = FINGERPRINT_BYTES * 8;
+
+/// Branchless `u64` equality mask: `u64::MAX` if `a == b`, else `0`.
+///
+/// Constant-time trick: `a ^ b == 0` iff `a == b`; squeeze zero/non-zero into
+/// the sign bit via `x | -x`, shift it down, then subtract 1 to flip the
+/// meaning. Mirrors `ct_eq_u32_mask` in the RisePIR reference decode, widened
+/// to the 64-bit fingerprint. Used by [`KpirClient::recover`] to select a
+/// matching slot's value without a data-dependent branch.
+#[inline]
+const fn ct_eq_u64_mask(a: u64, b: u64) -> u64 {
+    let x = a ^ b;
+    ((x | x.wrapping_neg()) >> 63).wrapping_sub(1)
+}
 
 /// Write the low `n_bits` of `value` into `cells` starting at global bit
 /// `bit_offset`, LSB-first, where each cell holds `pt` bits (cell `i` =
@@ -349,6 +389,33 @@ mod tests {
     use super::*;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    /// The branchless equality mask returns all-ones exactly on equality and
+    /// all-zeros otherwise — the invariant the constant-time `recover` scan
+    /// relies on (including the `u64::MAX` empty-slot sentinel as a non-match).
+    #[test]
+    fn ct_eq_u64_mask_is_branchless_equality() {
+        let vals = [
+            0u64,
+            1,
+            2,
+            42,
+            u64::MAX,
+            u64::MAX - 1,
+            1 << 63,
+            (1 << 63) + 1,
+        ];
+        for &x in &vals {
+            assert_eq!(ct_eq_u64_mask(x, x), u64::MAX, "equal case x={x:#x}");
+            for &y in &vals {
+                if x != y {
+                    assert_eq!(ct_eq_u64_mask(x, y), 0, "unequal case x={x:#x} y={y:#x}");
+                }
+            }
+        }
+        // The empty-slot sentinel never masks in a real key hash.
+        assert_eq!(ct_eq_u64_mask(u64::MAX, 0x1234_5678_9abc_def0), 0);
+    }
 
     /// Bit-packing round-trips a fingerprint + value across cell boundaries
     /// for several plaintext widths, and every cell stays in `[0, p)`.

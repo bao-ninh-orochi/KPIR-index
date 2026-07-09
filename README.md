@@ -182,9 +182,11 @@ This is **research benchmarking code, not a hardened PIR deployment**:
 - The parameters (`N = 1275`, `σ = 6.4`, uniform `Z_q` secret) target
   128-bit security under the ADPS16 core-SVP model, but the code has had
   **no independent security audit**.
-- The matvec kernel's schedule is data-independent (shape-only), but no
-  systematic side-channel hardening (constant-time samplers, zeroization of
-  secrets) has been done.
+- The matvec kernel's schedule is data-independent (shape-only), and the
+  `recover` decode is a branchless full-column scan (an OR-masked select that
+  visits every candidate slot, leaking no matched-row timing) — but this is
+  best-effort, not verified: no constant-time samplers or zeroization of
+  secrets, and the underlying LWE decode is unaudited.
 - `hash_key` is xxh3 (the reference uses truncated SHA-256): near-uniform
   and near-injective, which is all the scheme requires of it — it is a
   keyword→coordinate map, **not** a cryptographic commitment. Swap in a
