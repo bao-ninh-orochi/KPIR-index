@@ -1,0 +1,22 @@
+# Rust build artefacts
+/target
+debug
+**/*.rs.bk
+*.pdb
+
+# reference papers
+*.pdf
+
+# Benchmark output — regenerate via scripts/bench.sh; not tracked.
+/results/
+/simplepir/results/
+/kpir-index/results/
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local cargo config
+.cargo/config.toml

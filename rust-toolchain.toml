@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned to 1.85.0 to match the RisePIR reference repo, so head-to-head paper
+# numbers are measured on the same channel. Bump deliberately.
+channel    = "1.85.0"
+components = ["rustfmt", "clippy"]
+profile    = "minimal"

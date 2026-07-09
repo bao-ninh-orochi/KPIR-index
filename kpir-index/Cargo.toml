@@ -1,0 +1,42 @@
+[package]
+name        = "kpir-index"
+version     = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+repository.workspace   = true
+license.workspace      = true
+description = "KPIR^index keyword PIR (Hao et al., USENIX Sec'25) — core logic + head-to-head benchmarks"
+# `benches/helpers.rs` is a shared module included via `#[path]`, not a bench
+# target; disable auto-discovery and list the real benches explicitly.
+autobenches = false
+
+[lints]
+workspace = true
+
+[dependencies]
+simplepir   = { workspace = true }
+rand        = { workspace = true }
+xxhash-rust = { workspace = true }
+
+[dev-dependencies]
+rand      = { workspace = true }
+criterion = { workspace = true }
+clap      = { workspace = true }
+proptest  = { workspace = true }
+
+[[bench]]
+name    = "kpir_answer"
+harness = false
+
+[[bench]]
+name    = "kpir_query"
+harness = false
+
+[[bench]]
+name    = "kpir_decode"
+harness = false
+
+[[bench]]
+name    = "headtohead"
+harness = false
