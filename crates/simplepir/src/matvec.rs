@@ -4,9 +4,15 @@
 //! # Purpose
 //!
 //! Every online/offline LWE operation in this crate is a vector times a
-//! row-major matrix folded into a row-wide accumulator: `answer`
-//! (`qu × D`), `setup` (`A_col × D`), and the client precompute
-//! (`s × A`, `s × hint`). The naive loop
+//! row-major matrix folded into a row-wide accumulator. Under the FrodoPIR
+//! convention (the one RisePIR uses) all four are the same shape:
+//!
+//! - `answer` — `ans = qu·D`, `D` the database `C×R` row-major
+//!   (`db[c*R + r]`, query-row `c` contiguous);
+//! - `setup`  — `H = Aᵀ·D` (`A` consumed column-by-column);
+//! - the client precompute `a_s = A·s` and `h_s = sᵀ·H`.
+//!
+//! The naive loop
 //!
 //! ```text
 //! for i in rows { for j in width { acc[j] += q[i] · d[i][j] } }
@@ -14,8 +20,28 @@
 //!
 //! stores to the accumulator once per cell; register-blocking `R` rows
 //! per pass amortises that store and gives the autovectorizer `R`
-//! independent products to pipeline. Ported from the RisePIR reference
-//! kernel so the two schemes are benchmarked under the same model.
+//! independent products to pipeline. Ported bit-for-bit from the RisePIR
+//! reference kernel so the two schemes are benchmarked under the same
+//! model.
+//!
+//! # Why this layout, not ChalametPIR's column-major
+//!
+//! The reduction axis of `ans = qu·D` is the query dimension `C`, which is
+//! **strided** in this `C×R` row-major buffer (`db[c*R + r]` for
+//! consecutive `c` is `R` apart). ChalametPIR instead stores the database
+//! column-major so that axis is contiguous and each output cell is a
+//! straight-line dot product. That looks like it should be faster — but
+//! measured single-threaded on Apple M1, this register-blocked kernel over
+//! the strided layout runs **28–37 % faster** (≈46 GB/s vs ≈33 GB/s)
+//! whenever the `R`-cell accumulator fits in L1, and equal when the
+//! database is RAM-bound: the blocked kernel keeps the accumulator resident
+//! and streams the database contiguously with efficient SIMD stores,
+//! whereas the dot product pays a horizontal reduction per output cell.
+//! ChalametPIR's published edge came from **rayon parallelism** across
+//! output columns, not the layout; this crate is single-threaded by design
+//! (matching RisePIR for comparable head-to-head numbers), so the blocked
+//! kernel is the fast *and* RisePIR-identical choice. Do not "optimise"
+//! this into a column-major dot product without re-measuring.
 //!
 //! # Design / architecture
 //!
@@ -36,6 +62,9 @@
 ///
 /// `D` is `d`, a row-major `q.len() × acc.len()` matrix: cell `(i, j)`
 /// lives at `d[i * acc.len() + j]`. `acc[j] += Σ_i q[i] · d[i][j]`.
+///
+/// For the FrodoPIR answer `ans = qu·D`, pass `q = qu` (length `C`),
+/// `d` = the database `C×R` row-major, `acc` = `ans` (length `R`, zeroed).
 ///
 /// # Constraints
 ///

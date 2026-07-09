@@ -1,4 +1,4 @@
-//! Server-answer microbenchmark: the online `ans = D·qu` cost, the
+//! Server-answer microbenchmark: the online `ans = qu·D` cost, the
 //! dominant term of KPIR^index's per-query latency. One config = one CSV
 //! row (throughput in answers/second plus the query/response wire sizes).
 //!

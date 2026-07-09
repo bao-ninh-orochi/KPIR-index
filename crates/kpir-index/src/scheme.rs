@@ -6,8 +6,9 @@
 //! Ties the approximate key-to-index map ([`crate::pla`]) to the
 //! Row-KOPIR backend ([`simplepir`]). Setup sorts the hashed keys, learns
 //! the PLA map, and repetition-encodes the key-value pairs into the
-//! `R × C` `Z_p` matrix; a query extracts the approximate rank, selects the
-//! covering column, and privately retrieves it; recover scans the `≤ 2ε+3`
+//! `C × R` `Z_p` matrix `D` (stored row-major, each column contiguous);
+//! a query extracts the approximate rank, selects the covering column, and
+//! privately retrieves it via `ans = qu·D`; recover scans the `≤ 2ε+3`
 //! candidate entries of that column for the fingerprint match.
 //!
 //! # Encoding (closed form of `mpc4j`'s column-major placement)
@@ -87,13 +88,13 @@ impl KpirServer {
         &self.shape
     }
 
-    /// Answer a query: the online server operation, `ans = D·qu`.
+    /// Answer a query: the online server operation, `ans = qu·D`.
     #[inline]
     pub fn answer(&self, qu: &[u32]) -> Vec<u32> {
         self.inner.answer(qu)
     }
 
-    /// Compute the one-time setup hint `hint = D·A` for the client.
+    /// Compute the one-time setup hint `H = Aᵀ·D` for the client.
     #[inline]
     pub fn setup_hint(&self) -> Hint {
         self.inner.setup()
@@ -249,13 +250,20 @@ fn read_bits(cells: &[u32], pt: u32, bit_offset: usize, n_bits: usize) -> u64 {
     acc
 }
 
-/// Repetition-encode sorted entries into the transposed Row-KOPIR matrix
-/// `tdb` (`C × R`, `tdb[col*R + r] = D[r][col]`). Each slot holds
-/// `fingerprint(64 bits) ‖ value(8ℓ bits)` bit-packed into `partition`
-/// `pt`-bit `Z_p` cells; empty slots are `⊥` (every cell `p − 1`).
-/// `fill_value(g, buf)` writes the `value_bytes`-byte value of the `g`-th
-/// sorted entry.
-fn encode_tdb(
+/// Repetition-encode sorted entries into the Row-KOPIR database `db`,
+/// stored **row-major** over the `C × R` matrix `D` (`db[col*R + r] =
+/// D[col][r]`) — each column's `R` response cells contiguous, RisePIR's
+/// layout, so the answer `ans = qu·D` runs through the register-blocked
+/// kernel. Each slot holds `fingerprint(64 bits) ‖ value(8ℓ bits)`
+/// bit-packed into `partition` `pt`-bit `Z_p` cells; empty slots are `⊥`
+/// (every cell `p − 1`). `fill_value(g, buf)` writes the `value_bytes`-byte
+/// value of the `g`-th sorted entry.
+///
+/// Column `col`'s entry at plane-row `j` occupies response cells
+/// `r = j·partition .. (j+1)·partition`, contiguous at `db[col*R + r]`, so
+/// the recovered response `cells[r]` of a single retrieved column is in
+/// plane order — exactly what [`KpirClient::recover`] scans.
+fn encode_db(
     sorted_hashes: &[u64],
     shape: &MatrixShape,
     mut fill_value: impl FnMut(usize, &mut [u8]),
@@ -270,7 +278,7 @@ fn encode_tdb(
     // ⊥ default: every cell p − 1, so an untouched slot reads back as
     // fingerprint u64::MAX (never matches a real key hash).
     let sentinel = (1u32 << pt) - 1;
-    let mut tdb = vec![sentinel; shape.columns * r];
+    let mut db = vec![sentinel; shape.columns * r];
     let mut valbuf = vec![0u8; shape.value_bytes];
 
     for col in 0..shape.columns {
@@ -282,7 +290,7 @@ fn encode_tdb(
             }
             let g = g as usize;
             let base = col_base + j * partition;
-            let slot = &mut tdb[base..base + partition];
+            let slot = &mut db[base..base + partition];
             slot.fill(0); // clean valid slot (unused high bits stay 0)
             write_bits(slot, pt, 0, FINGERPRINT_BITS, sorted_hashes[g]);
             fill_value(g, &mut valbuf);
@@ -291,19 +299,19 @@ fn encode_tdb(
             }
         }
     }
-    tdb
+    db
 }
 
 /// Finish a setup: assemble the server and a client with a fresh secret.
 ///
 /// The client is built via the fast co-located path
 /// ([`SimplePirClient::with_local_server`]): it computes the recover
-/// offset `hint·s` directly as `D·(A·s)` rather than materialising the
-/// whole `hint = D·A` (a `Θ(R·C·N)` cost that would dominate a benchmark
-/// run). The hint's on-wire size — the offline setup download the
-/// head-to-head reports — is `R·N·4` and is recorded analytically.
+/// offset `sᵀ·H` directly as `(A·s)·D` rather than materialising the
+/// whole hint `H = Aᵀ·D` (a `Θ(R·C·N)` cost that would dominate a
+/// benchmark run). The hint's on-wire size — the offline setup download
+/// the head-to-head reports — is `R·N·4` and is recorded analytically.
 fn assemble<R: RngCore>(
-    tdb: Vec<u32>,
+    db: Vec<u32>,
     sorted_hashes: &[u64],
     shape: MatrixShape,
     config: &SimpleConfig,
@@ -311,8 +319,7 @@ fn assemble<R: RngCore>(
     rng: &mut R,
 ) -> (KpirServer, KpirClient) {
     let params = config.to_params(seed, shape.plaintext_bits);
-    let inner =
-        SimplePirServer::from_transposed_db(tdb, shape.response_dim(), shape.columns, params);
+    let inner = SimplePirServer::from_row_major_db(db, shape.response_dim(), shape.columns, params);
     let hint_wire_bytes =
         shape.response_dim() * config.lwe_dim as usize * core::mem::size_of::<u32>();
     let map = KeyIndexMap::build(sorted_hashes, shape.epsilon);
@@ -346,8 +353,8 @@ pub fn build_synthetic<R: RngCore>(
     hashes.sort_unstable();
     hashes.dedup(); // hash collisions among distinct keys are ~impossible at n ≤ 2^30
     let shape = MatrixShape::choose(hashes.len(), value_bytes, epsilon, config.sigma);
-    let tdb = encode_tdb(&hashes, &shape, |g, buf| synthetic_value(hashes[g], buf));
-    assemble(tdb, &hashes, shape, config, seed, rng)
+    let db = encode_db(&hashes, &shape, |g, buf| synthetic_value(hashes[g], buf));
+    assemble(db, &hashes, shape, config, seed, rng)
 }
 
 /// Set up KPIR^index over an explicit set of key-value pairs. Values are
@@ -375,13 +382,13 @@ pub fn build_from_pairs<R: RngCore>(
     }
     let hashes: Vec<u64> = items.iter().map(|(h, _)| *h).collect();
     let shape = MatrixShape::choose(hashes.len(), value_bytes, epsilon, config.sigma);
-    let tdb = encode_tdb(&hashes, &shape, |g, buf| {
+    let db = encode_db(&hashes, &shape, |g, buf| {
         let v = items[g].1;
         let take = v.len().min(buf.len());
         buf[..take].copy_from_slice(&v[..take]);
         buf[take..].fill(0);
     });
-    assemble(tdb, &hashes, shape, config, seed, rng)
+    assemble(db, &hashes, shape, config, seed, rng)
 }
 
 #[cfg(test)]

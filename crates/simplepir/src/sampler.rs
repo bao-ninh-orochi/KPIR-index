@@ -35,7 +35,7 @@ fn rng_from_seed(seed: &[u8; 16]) -> ChaCha20Rng {
 /// # Rationale
 ///
 /// The backend never needs `A` in `C×N` form: the client precompute
-/// `A·s` and the server `D·A` both consume `A` column-by-column, i.e.
+/// `A·s` and the setup hint `Aᵀ·D` both consume `A` column-by-column, i.e.
 /// row-by-row of `Aᵀ`. Storing `Aᵀ` (row `k` = column `k` of `A`) keeps
 /// every access sequential. `A` is uniform, so `Aᵀ` is too — we just
 /// draw `N·C` successive `u32`s.

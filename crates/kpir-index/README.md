@@ -23,7 +23,7 @@ glue. The LWE math lives entirely in `simplepir`.
 |---|---|
 | `pla` | `KeyIndexMap` — optimal ε-PLA (PGM-index, Ferragina & Vinciguerra), a direct port of the `mpc4j` `PlaModel` (`f64` key coordinate, `i64` index coordinate). `build` over sorted hashed keys, `extract` within `ε + 1` of the true rank |
 | `params` | `MatrixShape` — the `mpc4j` `getMatrixSize` formula generalised to a variable plaintext width. `new(n, ℓ, ε, pt)` is explicit; `choose(n, ℓ, ε, σ)` picks the largest decodable width (the adaptive operating point). `FINGERPRINT_BYTES = 8`, `DEFAULT_EPSILON = 4` |
-| `scheme` | `hash_key` (xxh3), `build_synthetic` / `build_from_pairs`, `KpirServer` / `KpirClient`, plus the private bit-packing (`write_bits`/`read_bits`) and the closed-form column-major encoder (`encode_tdb`) |
+| `scheme` | `hash_key` (xxh3), `build_synthetic` / `build_from_pairs`, `KpirServer` / `KpirClient`, plus the private bit-packing (`write_bits`/`read_bits`) and the closed-form column-major encoder (`encode_db`) |
 | `benches/` | `helpers.rs` (shared CLI/sampler/CSV/verify harness, included via `#[path]`), `headtohead`, `kpir_answer`, `kpir_query`, `kpir_decode` |
 | `tests/` | `proptests.rs` — property tests: end-to-end roundtrip on arbitrary pairs, the PLA extract guarantee, and the `MatrixShape` defining inequalities |
 

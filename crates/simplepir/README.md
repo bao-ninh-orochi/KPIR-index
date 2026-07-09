@@ -14,36 +14,37 @@ kpir-index ──► simplepir
 ```
 
 `kpir-index` (the keyword layer) encodes its key-value matrix into this
-crate's transposed database, then drives `setup → query → answer →
+crate's row-major database, then drives `setup → query → answer →
 recover`. Nothing here knows about keywords, fingerprints, or the PLA.
 
 ## Protocol
 
-The database is `D ∈ Z_p^{R×C}` (`p = 2^plaintext_bits`, each cell a
-`u32` in `[0, p)`). A query privately selects one **column**; the answer
-returns all `R` cells of it. All arithmetic is mod `q = 2³²` via native
-`u32` wraparound; `Δ = q/p`. The public matrix `A ∈ Z_q^{C×N}` is
-expanded from a 16-byte seed and never shipped.
+The database is `D ∈ Z_p^{C×R}` (`p = 2^plaintext_bits`, each cell a
+`u32` in `[0, p)`). Following the FrodoPIR convention (as RisePIR does), a
+query privately selects one **row** via the left-multiply `ans = qu·D`;
+the answer returns all `R` cells of it. All arithmetic is mod `q = 2³²`
+via native `u32` wraparound; `Δ = q/p`. The public matrix `A ∈ Z_q^{C×N}`
+is expanded from a 16-byte seed and never shipped.
 
 | Step | Computation | Where |
 |---|---|---|
-| Setup | `hint = D·A ∈ Z_q^{R×N}` (client downloads once) | `SimplePirServer::setup` |
-| KeyGen | `s ← Z_q^N`; `a_s = A·s`, `h_s = hint·s` | `SimplePirClient::new` |
+| Setup | `H = Aᵀ·D ∈ Z_q^{N×R}` (client downloads once) | `SimplePirServer::setup` |
+| KeyGen | `s ← Z_q^N`; `a_s = A·s`, `h_s = sᵀ·H` | `SimplePirClient::new` |
 | Query | `qu = a_s + e + Δ·u_col ∈ Z_q^C`, `e ← χ^C` | `SimplePirClient::query` |
-| Answer | `ans = D·qu ∈ Z_q^R` | `SimplePirServer::answer` |
-| Recover | `Round_Δ(ans − h_s)` → column `col` | `SimplePirClient::recover` |
+| Answer | `ans = qu·D ∈ Z_q^R` | `SimplePirServer::answer` |
+| Recover | `Round_Δ(ans − h_s)` → row `col` | `SimplePirClient::recover` |
 
-This column-selection form is the transpose of the paper's Figure 2
-presentation and matches the `mpc4j` reference (`SimpleCpIdxPir`).
+This `ans = qu·D` form is the FrodoPIR convention and matches the `mpc4j`
+reference (`SimpleCpIdxPir`).
 
 ## What's here
 
 | Module | Items |
 |---|---|
-| `backend` | `SimplePirServer` (transposed `C×R` `u32` DB; `setup`/`answer`; decode-bound guard in `from_transposed_db`), `SimplePirClient` (`new` from a real hint, or `with_local_server` — the bit-identical fast path for co-located benchmarks), `Hint` |
+| `backend` | `SimplePirServer` (row-major `C×R` `u32` DB; `setup`/`answer`; decode-bound guard in `from_row_major_db`), `SimplePirClient` (`new` from a real hint, or `with_local_server` — the bit-identical fast path for co-located benchmarks), `Hint` |
 | `params` | `SimpleParams` (runtime knobs) / `SimpleConfig` (user-facing knobs), `noise_bound_satisfied` — the SimplePIR Gaussian decode bound shared by the backend guard and the `kpir-index` operating-point selector, `MAX_PLAINTEXT_BITS = 14` |
-| `matvec` | the shared register-blocked `acc += qᵀ·D` kernel behind every hot loop — **bit-identical** to the RisePIR kernel (same width-adaptive blocking rule, `R` rows per pass with `R·width ≤ 2048` cells), so the two schemes are benchmarked on the same inner loop |
-| `sampler` | ChaCha20-seeded `A` expansion (transposed `N×C` layout), uniform-`Z_q` secret, Box–Muller discrete Gaussian |
+| `matvec` | the shared register-blocked `acc += qᵀ·D` kernel behind every op — `answer` (`qu·D`), `setup` (`Aᵀ·D`), the `A·s` / `sᵀ·H` precompute — **bit-identical** to the RisePIR kernel (width-adaptive blocking, `R` rows per pass with `R·width ≤ 2048`). Measured single-threaded on Apple M1 this beats ChalametPIR's column-major dot product (28–37% when the accumulator fits L1; ChalametPIR's edge was rayon parallelism, which this crate forgoes) |
+| `sampler` | ChaCha20-seeded `A` expansion (transposed `N×C` layout = `Aᵀ`), uniform-`Z_q` secret, Box–Muller discrete Gaussian |
 | `arith` | `round_q_to_p` (`Round_Δ`), width-generic; equals `mpc4j`'s byte recovery at `plaintext_bits = 8` |
 
 ## Parameters
@@ -54,13 +55,13 @@ presentation and matches the `mpc4j` reference (`SimpleCpIdxPir`).
   matching RisePIR-S; the original `mpc4j` build uses `N = 1024`).
 - `plaintext_bits` is **adaptive**, not fixed: the largest width `≤ 14`
   that satisfies `noise_bound_satisfied` for the geometry's summation
-  dimension (`δ = 2⁻⁴⁰`). `from_transposed_db` refuses geometries that
+  dimension (`δ = 2⁻⁴⁰`). `from_row_major_db` refuses geometries that
   violate the bound, so a mis-chosen width fails loudly at build time.
 
 ## Status
 
 Research-grade core logic for benchmarking; see the
 [workspace README](../../README.md#security) for the security notice.
-Everything is single-threaded with no explicit SIMD — perf comes from
-the register-blocked kernel and the autovectorizer, exactly as in the
-RisePIR reference.
+Everything is single-threaded with no explicit SIMD — the answer's perf
+comes from the register-blocked kernel (RisePIR's approach) and the
+autovectorizer.

@@ -47,7 +47,7 @@ Measured on an Apple M1 (16 GiB), single-threaded, via
 implementation-independent; answer latency is hardware-dependent.
 
 † The ℓ = 1024 B config is an outlier on this machine, not in the algorithm:
-its transposed `u32` database is **5.7 GiB**, which a 16 GiB laptop cannot
+its `u32` database is **5.7 GiB**, which a 16 GiB laptop cannot
 keep resident, so the measurement is dominated by macOS memory compression.
 The same kernel streams at ~34 GB/s whenever the database fits in RAM — at
 `--m 300000` the 1024 B answer takes **53.6 ms** over a 1.8 GiB database —
@@ -132,9 +132,9 @@ between the schemes is attributable to the algorithms, not the harnesses:
 - **Same wire accounting.** Communication = fixed-width little-endian `u32`
   cells: query `C·4` B, response `R·4` B, one-time hint `R·N·4` B. `A` is
   regenerated from its 16-byte seed, never shipped.
-- **Honest hint accounting.** Benches skip materialising `hint = D·A`
-  (a `Θ(R·C·N)` offline cost) by computing the client offset `hint·s` as
-  `D·(A·s)` through the co-located server — **bit-identical** to using the
+- **Honest hint accounting.** Benches skip materialising `H = Aᵀ·D`
+  (a `Θ(R·C·N)` offline cost) by computing the client offset `sᵀ·H` as
+  `(A·s)·D` through the co-located server — **bit-identical** to using the
   real hint (pinned by `backend::tests::local_server_client_matches_hint_client`);
   the hint's wire size is still reported analytically.
 - **Correctness-gated numbers.** Every bench first verifies the pipeline
@@ -160,7 +160,7 @@ Benches append one CSV row per config to
 `${KPIR_RESULTS_BASE:-results}/kpir-index/<bench>.csv`.
 
 **Note on scale.** The matrix grows with `ℓ`: at `ℓ = 1024 B`, m = 10⁶ the
-transposed `u32` database is ~5.7 GiB (4× a byte-packed database — the price
+`u32` database is ~5.7 GiB (4× a byte-packed database — the price
 of the RisePIR-comparable cell model). Budget RAM accordingly; see the †
 footnote above for what happens when it doesn't fit.
 
@@ -169,7 +169,7 @@ footnote above for what happens when it doesn't fit.
 | Paper (Hao et al. / `mpc4j`) | Code |
 |------------------------------|------|
 | Row-KOPIR `Setup/Query/Answer/Recover` | `SimplePirServer::{setup,answer}`, `SimplePirClient::{query,recover}` |
-| `hint = A·D` | `SimplePirServer::setup` (`hint = D·A`, transposed layout) |
+| `hint = A·D` | `SimplePirServer::setup` (`H = Aᵀ·D`, row-major layout) |
 | `AKIM.Map_ε` / `Extract_ε` | `pla::KeyIndexMap::{build,extract}` |
 | matrix `r × (c+2ε)`, `mpc4j getMatrixSize` | `params::MatrixShape::{new, choose}` |
 | `ε`, fingerprint `DIGEST_BYTE_L` | `epsilon`, `FINGERPRINT_BYTES = 8` |

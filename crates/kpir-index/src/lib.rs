@@ -33,7 +33,7 @@
 //!
 //! let key = 42u64.to_le_bytes();
 //! let qu = client.query(&key, &mut rng);       // keyword → private column query
-//! let ans = server.answer(&qu);                // server: ans = D · qu
+//! let ans = server.answer(&qu);                // server: ans = qu · D
 //! let value = client.recover(&key, &ans).unwrap();
 //!
 //! let mut want = vec![0u8; 32];

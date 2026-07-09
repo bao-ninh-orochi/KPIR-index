@@ -22,16 +22,22 @@ security notice.
   - `matvec.rs` — the shared register-blocked `acc += qᵀ·D` kernel; all `u32`
     (DB cells in `[0, p)`). Bit-exact, single-thread, no explicit SIMD.
     **Bit-identical port of RisePIR's kernel** (`ikpir-common` commit
-    `dc2dd04`): same width-adaptive dispatch (largest power-of-two `R ≤ 16`
-    with `R·width ≤ 2048` cells). This is a fairness invariant — never let the
-    two kernels diverge.
-  - `sampler.rs` — ChaCha-seeded `A` expansion (transposed `N×C` layout),
+    `dc2dd04`): width-adaptive dispatch (largest power-of-two `R ≤ 16` with
+    `R·width ≤ 2048`). Used by every op — `answer` (`qu·D`), `setup` (`Aᵀ·D`),
+    the `A·s` / `sᵀ·H` precompute. **Do not switch the DB answer to a
+    ChalametPIR-style column-major dot product**: measured single-thread on
+    Apple M1 this blocked kernel is 28–37% *faster* than column-major when the
+    `R`-cell accumulator fits L1 (equal when RAM-bound); ChalametPIR's edge was
+    rayon parallelism, which this crate forgoes. The module doc records the
+    numbers.
+  - `sampler.rs` — ChaCha-seeded `A` expansion (transposed `N×C` layout = `Aᵀ`),
     uniform-`Z_q` secret, Box–Muller discrete Gaussian.
   - `arith.rs` — `round_q_to_p` (`Round_Δ`), width-generic (matches `mpc4j`'s
     byte recovery at `plaintext_bits = 8`).
-  - `backend.rs` — `SimplePirServer` (transposed `C×R` `u32` DB, `setup`/`answer`,
-    with a decode-bound **guard** in `from_transposed_db`; `recover → Vec<u32>`
-    of `Z_p` cells), `SimplePirClient` (`new` from real hint, or
+  - `backend.rs` — `SimplePirServer` (row-major `C×R` `u32` DB `db[c*R+r]` —
+    RisePIR's layout, each query-column contiguous — `setup`/`answer`, with a
+    decode-bound **guard** in `from_row_major_db`; `recover → Vec<u32>` of
+    `Z_p` cells), `SimplePirClient` (`new` from real hint, or
     `with_local_server` fast path), `Hint`.
 - **`kpir-index`** — the keyword scheme.
   - `params.rs` — `MatrixShape`: the `mpc4j getMatrixSize` formula generalised
@@ -41,7 +47,7 @@ security notice.
   - `pla.rs` — optimal ε-PLA (PGM). Direct port of `mpc4j` `PlaModel`
     (`f64` key coord, `i64` index coord). `build` + `extract`.
   - `scheme.rs` — `hash_key` (xxh3), `synthetic_value`, `write_bits`/`read_bits`
-    (LSB-first bit-packing into `pt`-bit cells), `encode_tdb` (closed-form
+    (LSB-first bit-packing into `pt`-bit cells), `encode_db` (closed-form
     column-major placement → `Vec<u32>`), `build_synthetic` / `build_from_pairs`,
     `KpirServer` / `KpirClient`.
   - `benches/` — `helpers.rs` (shared via `#[path]`), `headtohead`, `kpir_answer`,
@@ -63,25 +69,31 @@ security notice.
   RisePIR-S — pinned by `params::tests::adaptive_operating_point`.
 - **Adaptive plaintext width**: `pt = min(MAX_PLAINTEXT_BITS, largest pt whose
   query dim C still decodes)` via `simplepir::noise_bound_satisfied` (the noise
-  dim is `C`, since `answer` sums over the `C` columns). Same choice RisePIR-S
-  makes. The backend `from_transposed_db` **guards** on this bound.
-- **Column encoding** (`encode_tdb → Vec<u32>`): slot `(col, j)` holds sorted
-  entry `g = col·data_rows + (j − ε − 1)`, its `fingerprint(64b) ‖ value(8ℓ b)`
-  bit-packed LSB-first into `partition` `pt`-bit cells (⊥ = every cell `p − 1`,
-  which reads back as fingerprint `u64::MAX`). Boundary rows carry neighbouring
-  columns' edges; the PLA's `ε+1` effective error is covered by the `ε+1`/`ε+2`
-  padding — pinned by the end-to-end test (which now runs at `pt = 10`) and the
-  `tests/proptests.rs` roundtrip.
+  dim is `C`, since `answer` sums over the `C` query positions). Same choice
+  RisePIR-S makes. The backend `from_row_major_db` **guards** on this bound.
+- **Column encoding** (`encode_db → Vec<u32>`, row-major `db[col*R + r]`):
+  column `col`, plane-row `j` holds sorted entry `g = col·data_rows + (j − ε − 1)`,
+  its `fingerprint(64b) ‖ value(8ℓ b)` bit-packed LSB-first into `partition`
+  `pt`-bit cells at contiguous response rows `r = j·partition + p`
+  (`db[col*R + r]`), so a recovered column's `cells[r]` are in plane order for
+  `recover` (⊥ = every cell `p − 1`, reads back as fingerprint `u64::MAX`).
+  Boundary rows carry neighbouring columns' edges; the PLA's `ε+1` effective
+  error is covered by the `ε+1`/`ε+2` padding — pinned by the end-to-end test
+  (which now runs at `pt = 10`) and the `tests/proptests.rs` roundtrip.
 - **Constant-time decode** (`KpirClient::recover`): a **branchless full-column
   scan** — it visits all `rows` slots and OR-masks the value into a fixed
   accumulator via `ct_eq_u64_mask` (port of RisePIR's `ct_eq_u32_mask`), so the
   probe path leaks no matched-row timing. **Do not reintroduce an early return
   / `if fp == want`.** Best-effort (not verified); the underlying SimplePIR LWE
   decode is a separate concern. Mirrors `ikpir-client`'s `decode`.
-- **Row-KOPIR is column-selection** (transpose of the paper's Figure 2), matching
-  `mpc4j`: query length = `C`, response length = `R`. `hint = D·A`.
-- **`with_local_server` == `new(hint)`**: the fast client computes `hint·s` as
-  `D·(A·s)`; pinned by `backend::tests::local_server_client_matches_hint_client`.
+- **FrodoPIR convention** `ans = qu·D` (matches RisePIR): query `qu` (length `C`)
+  left-selects one column of `D ∈ Z_p^{C×R}` stored **row-major** (`db[c*R+r]`,
+  each column contiguous — RisePIR's exact layout); response length `R`.
+  `hint = Aᵀ·D`. Structurally identical to RisePIR (storage + blocked kernel);
+  the change from the old code was the naming (was written `D·qu`), not the
+  bytes. Column-major (ChalametPIR) was measured and rejected — see `matvec.rs`.
+- **`with_local_server` == `new(hint)`**: the fast client computes `sᵀ·H` as
+  `(A·s)·D`; pinned by `backend::tests::local_server_client_matches_hint_client`.
 - **N choice**: default 1275 (128-bit, matches RisePIR-S). `--lwe-dim 1024` gives
   the original `mpc4j` setting. `σ = 6.4` + uniform-`Z_q` secret = SimplePIR (kept
   in sync with RisePIR-S).

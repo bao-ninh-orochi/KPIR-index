@@ -29,15 +29,15 @@
 //! there is `√(√N)` **only because the paper assumes a square `√N×√N`
 //! database** — each output noise coordinate then sums over exactly `√N`
 //! cells. KPIR^index matrices are **not** square: the encoded DB is
-//! `R × C` with `C = ⌈√(n·partition)⌉` (query/upload dim) and
+//! `C × R` with `C = ⌈√(n·partition)⌉` (query/upload dim) and
 //! `R = rows·partition` (response/download dim). The online answer
-//! `ans = D·qu` makes each output coordinate `Σ_{c<C} D[r,c]·e[c]` — a
-//! sum over the **`C` columns**, since the query error `e` has length `C`
-//! — so the noise-summation dimension is `C`, and the paper's `N^(1/4)`
-//! must be replaced by `√C`. A second adjustment (`2√2` vs the paper's
-//! `√2`) covers cells living in `[0, p)` rather than centered
+//! `ans = qu·D` makes each output coordinate `Σ_{c<C} D[c,r]·e[c]` — a
+//! sum over the **`C` query positions**, since the query error `e` has
+//! length `C` — so the noise-summation dimension is `C`, and the paper's
+//! `N^(1/4)` must be replaced by `√C`. A second adjustment (`2√2` vs the
+//! paper's `√2`) covers cells living in `[0, p)` rather than centered
 //! `[−p/2, p/2)`. Both are baked into [`noise_bound_satisfied`], and the
-//! backend guard ([`crate::SimplePirServer::from_transposed_db`])
+//! backend guard ([`crate::SimplePirServer::from_row_major_db`])
 //! re-checks the same predicate.
 //!
 //! With these corrections the adaptive selector (`kpir-index`'s
@@ -67,14 +67,14 @@ pub const MAX_PLAINTEXT_BITS: u32 = 14;
 /// in `[0, p)`: the worst-case database-row norm is `p·√dim`, not
 /// `(p/2)·√dim`. `summation_dim` is the number of cells the online answer
 /// accumulates — for Row-KOPIR the query dimension `C` (the answer
-/// `ans = D·qu` sums over the `C` columns). Using `√summation_dim` here,
-/// rather than the paper's `N^(1/4) = √(√N)`, is the **non-square**
+/// `ans = qu·D` sums over the `C` query positions). Using `√summation_dim`
+/// here, rather than the paper's `N^(1/4) = √(√N)`, is the **non-square**
 /// correction: `N^(1/4)` is only the summed-cell count for a square
-/// `√N×√N` matrix, which KPIR^index's `R×C` geometry is not (see the
+/// `√N×√N` matrix, which KPIR^index's `C×R` geometry is not (see the
 /// module docs).
 ///
 /// This is the single source of truth shared by the backend guard
-/// ([`crate::SimplePirServer::from_transposed_db`]) and the `kpir-index`
+/// ([`crate::SimplePirServer::from_row_major_db`]) and the `kpir-index`
 /// selector, so the two can never drift. Twin of RisePIR's
 /// `ikpir-common::pir_params::simple_max_plaintext_bits`.
 #[inline]
