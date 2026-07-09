@@ -56,15 +56,15 @@ one CSV row per config under `${KPIR_RESULTS_DIR:-results}/<bench>.csv`
 — the same harness conventions as the RisePIR repo.
 
 ```bash
-../scripts/smoke.sh                                     # all benches, tiny config
-../scripts/headtohead.sh                                # CANS2026 Table 3 sweep
-../scripts/bench.sh kpir_answer --m 1000000 --value-bytes 256
+../../scripts/smoke.sh                                  # all benches, tiny config
+../../scripts/headtohead.sh                             # CANS2026 Table 3 sweep
+../../scripts/bench.sh kpir_answer --m 1000000 --value-bytes 256
 ```
 
 ## Status
 
 Research-grade core logic for benchmarking; see the
-[workspace README](../README.md#security) for the security notice.
+[workspace README](../../README.md#security) for the security notice.
 The public API surface (`build_*`, `KpirServer`, `KpirClient`,
 `MatrixShape`, `KeyIndexMap`) is small and stable; serialization and
 transport are intentionally out of scope.

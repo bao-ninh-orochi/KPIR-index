@@ -1,7 +1,7 @@
 # simplepir
 
 Row-KOPIR — the single-server, LWE-based **index**-PIR backend underneath
-[KPIR^index](../README.md), instantiated from SimplePIR (Henzinger et al.,
+[KPIR^index](../../README.md), instantiated from SimplePIR (Henzinger et al.,
 USENIX Security 2023). Core logic only: no networking, no serialization,
 no external crypto/linear-algebra crates — all math is hand-rolled `u32`
 so head-to-head numbers against RisePIR and ChalametPIR are measured
@@ -60,7 +60,7 @@ presentation and matches the `mpc4j` reference (`SimpleCpIdxPir`).
 ## Status
 
 Research-grade core logic for benchmarking; see the
-[workspace README](../README.md#security) for the security notice.
+[workspace README](../../README.md#security) for the security notice.
 Everything is single-threaded with no explicit SIMD — perf comes from
 the register-blocked kernel and the autovectorizer, exactly as in the
 RisePIR reference.

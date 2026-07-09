@@ -67,11 +67,11 @@ Table 5 and `mpc4j`'s `getMatrixSize` (32 B → 25.30/27.20 kB, 256 B →
 KPIR^index reduces keyword PIR to standard index PIR with two building blocks:
 
 1. **Approximate key-to-index mapping (PLA / PGM)** —
-   [`kpir-index/src/pla.rs`](kpir-index/src/pla.rs). Hash each keyword to a
+   [`kpir-index/src/pla.rs`](crates/kpir-index/src/pla.rs). Hash each keyword to a
    uniform 64-bit value, sort, and learn an optimal piece-wise linear
    approximation (Ferragina & Vinciguerra). For any trained key it returns a
    rank within `ε + 1` of the true one.
-2. **Row-KOPIR (SimplePIR)** — the [`simplepir`](simplepir/README.md) crate.
+2. **Row-KOPIR (SimplePIR)** — the [`simplepir`](crates/simplepir/README.md) crate.
    The database is a `Z_p` matrix of `u32` cells (`p = 2^pt`, chosen
    adaptively); one query privately retrieves one whole **column**.
 
@@ -94,8 +94,8 @@ cargo doc --workspace --no-deps --open
 
 | Path | What it is |
 |---|---|
-| [`simplepir/`](simplepir/README.md) | Row-KOPIR (SimplePIR) index-PIR backend: all LWE math, the shared blocked matvec kernel, samplers, decode bound |
-| [`kpir-index/`](kpir-index/README.md) | The keyword scheme: PLA, matrix geometry, bit-packed encoding, query/answer/recover glue, benches, property tests |
+| [`crates/simplepir/`](crates/simplepir/README.md) | Row-KOPIR (SimplePIR) index-PIR backend: all LWE math, the shared blocked matvec kernel, samplers, decode bound |
+| [`crates/kpir-index/`](crates/kpir-index/README.md) | The keyword scheme: PLA, matrix geometry, bit-packed encoding, query/answer/recover glue, benches, property tests |
 | [`scripts/`](scripts/) | `bench.sh` (one bench, one config) · `headtohead.sh` (Table 3 sweep) · `smoke.sh` (correctness-gated tiny run of every bench) · `lib.sh` (shared) |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | fmt · clippy `-D warnings` · tests · bench build · smoke, on the pinned 1.85.0 toolchain |
 | `results/` | Bench CSVs (gitignored; append-per-run) |
@@ -117,7 +117,7 @@ Every convention below matches the RisePIR repo, so a latency difference
 between the schemes is attributable to the algorithms, not the harnesses:
 
 - **Same inner loop.** The `acc += qᵀ·D` register-blocked kernel
-  (`simplepir/src/matvec.rs`) is a bit-identical port of RisePIR's — the same
+  (`crates/simplepir/src/matvec.rs`) is a bit-identical port of RisePIR's — the same
   width-adaptive blocking rule (largest power-of-two `R ≤ 16` with
   `R·width ≤ 2048` cells), pinned bit-exact against the naive loop by tests.
   RisePIR adopted this kernel to close a harness-induced gap against

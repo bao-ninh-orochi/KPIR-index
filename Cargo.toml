@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
-    "simplepir",
-    "kpir-index",
-]
+members = ["crates/*"]
 
 [workspace.package]
 version      = "0.1.0"
@@ -14,8 +11,8 @@ repository   = "https://github.com/orochi-network/KPIR-index"
 license      = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-simplepir   = { path = "simplepir",  version = "0.1" }
-kpir-index  = { path = "kpir-index",  version = "0.1" }
+simplepir   = { path = "crates/simplepir",  version = "0.1" }
+kpir-index  = { path = "crates/kpir-index",  version = "0.1" }
 clap        = { version = "4", features = ["derive"] }
 criterion   = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 rand        = "0.9"

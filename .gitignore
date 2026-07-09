@@ -9,8 +9,8 @@ debug
 
 # Benchmark output — regenerate via scripts/bench.sh; not tracked.
 /results/
-/simplepir/results/
-/kpir-index/results/
+/crates/simplepir/results/
+/crates/kpir-index/results/
 
 # cargo-mutants output
 **/mutants.out*/
