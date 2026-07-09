@@ -6,6 +6,7 @@ rust-version.workspace = true
 authors.workspace      = true
 repository.workspace   = true
 license.workspace      = true
+publish.workspace      = true
 description = "Row-KOPIR (SimplePIR) single-server index PIR backend — core logic for the KPIR^index re-implementation"
 readme      = "README.md"
 keywords    = ["pir", "private-information-retrieval", "lwe", "simplepir"]

@@ -6,6 +6,7 @@ rust-version.workspace = true
 authors.workspace      = true
 repository.workspace   = true
 license.workspace      = true
+publish.workspace      = true
 description = "KPIR^index keyword PIR (Hao et al., USENIX Sec'25) — core logic + head-to-head benchmarks"
 readme      = "README.md"
 keywords    = ["pir", "keyword-pir", "private-information-retrieval", "pgm-index", "lwe"]
