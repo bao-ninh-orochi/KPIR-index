@@ -131,11 +131,14 @@ cargo doc --workspace --no-deps                 # rustdoc must stay warning-free
   `missing_docs` per-library. Single-thread, no rayon/ndarray/external crypto —
   match RisePIR so head-to-head numbers are comparable.
 - Benches: `harness = false`, standalone `main`, clap `Cli` (filters the
-  `--bench` cargo injects), manual throughput sampler → mean/min/max/stddev
-  ops/s, one config = one appended CSV row under
-  `${KPIR_RESULTS_DIR}/<bench>.csv`. `autobenches = false` (helpers is a shared
-  module, not a target). Communication = fixed-width LE wire bytes; `A` excluded
-  from the hint (regenerated from seed).
+  `--bench` cargo injects), criterion `iter_custom` throughput measurement
+  (`helpers::measure`) → mean/min/max/stddev ops/s, one config = one appended
+  CSV row under `${KPIR_RESULTS_DIR}/<bench>.csv`. The criterion contract is
+  clap-tunable (`--sample-size`/`--warmup-secs`/`--measurement-secs`, defaults
+  100 / 3 s / 5 s — the same Table 3 contract RisePIR and ChalametPIR pin), and
+  criterion's native report lands under `target/criterion/`. `autobenches =
+  false` (helpers is a shared module, not a target). Communication = fixed-width
+  LE wire bytes; `A` excluded from the hint (regenerated from seed).
 - Every bench gates on `helpers::verify` before reporting numbers.
 - `smoke.sh` writes to `results/.smoke/` (its own scratch base, cleared at
   start and end) — it must never touch the real `results/kpir-index/` CSVs.

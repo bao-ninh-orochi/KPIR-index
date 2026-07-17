@@ -27,14 +27,11 @@ fn main() {
     let keys: Vec<[u8; 8]> = (0..queries.len() as u64).map(|i| i.to_le_bytes()).collect();
 
     let mut idx = 0usize;
-    let stats = helpers::measure(
-        || {
-            let v = client.recover(&keys[idx], &answers[idx]);
-            idx = (idx + 1) % answers.len();
-            helpers::keep_black_box_used(v);
-        },
-        cli.samples,
-    );
+    let stats = helpers::measure("kpir_decode", &cli, || {
+        let v = client.recover(&keys[idx], &answers[idx]);
+        idx = (idx + 1) % answers.len();
+        helpers::keep_black_box_used(v);
+    });
 
     println!(
         "kpir_decode  m={} l={}B N={} pt={}  Dec={:.4} ms ({:.1} dec/s)  R={} cells",

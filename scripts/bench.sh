@@ -3,7 +3,8 @@
 #
 # Usage:
 #   ./scripts/bench.sh <bench> [--m N] [--value-bytes N] [--lwe-dim N]
-#                              [--epsilon N] [--samples N] [--batch N] [--seed N]
+#                              [--epsilon N] [--batch N] [--seed N]
+#                              [--sample-size N] [--warmup-secs S] [--measurement-secs S]
 #
 #   <bench> ∈ {headtohead, kpir_answer, kpir_query, kpir_decode}
 #

@@ -27,14 +27,11 @@ fn main() {
     let mut rng = StdRng::seed_from_u64(cli.seed ^ 0xA5A5);
     let mut i = 0u64;
     let m = cli.m as u64;
-    let stats = helpers::measure(
-        || {
-            let qu = client.query(&i.to_le_bytes(), &mut rng);
-            i = (i + 1) % m;
-            helpers::keep_black_box_used(qu);
-        },
-        cli.samples,
-    );
+    let stats = helpers::measure("kpir_query", &cli, || {
+        let qu = client.query(&i.to_le_bytes(), &mut rng);
+        i = (i + 1) % m;
+        helpers::keep_black_box_used(qu);
+    });
 
     println!(
         "kpir_query  m={} l={}B N={} pt={}  Qry={:.4} ms ({:.1} qry/s)  upload={}",

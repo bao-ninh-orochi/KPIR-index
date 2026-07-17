@@ -1,20 +1,24 @@
-//! Shared benchmark harness: CLI parsing, a manual throughput sampler,
-//! CSV output, and a correctness verifier.
+//! Shared benchmark harness: CLI parsing, a criterion-based throughput
+//! measurement, CSV output, and a correctness verifier.
 //!
 //! Included by each bench via `#[path = "helpers.rs"] mod helpers;`.
 //! Mirrors the RisePIR (`ikpir`) bench conventions so head-to-head rows
-//! line up: fixed-width wire-byte communication, per-sample timing folded
-//! to mean/min/max/stddev ops-per-second, one config = one appended CSV
-//! row under `${KPIR_RESULTS_DIR:-results}/<bench>.csv`.
+//! line up: fixed-width wire-byte communication, criterion `iter_custom`
+//! per-sample timing folded to mean/min/max/stddev ops-per-second, one
+//! config = one appended CSV row under `${KPIR_RESULTS_DIR:-results}/<bench>.csv`.
 #![allow(dead_code)]
+// clippy's inline-`Criterion` fix borrows a temporary dropped while
+// `BenchmarkGroup` holds it (won't compile); same allow as RisePIR's helpers.
+#![allow(clippy::significant_drop_tightening)]
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use criterion::black_box;
+use criterion::{black_box, Criterion, Throughput};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -42,9 +46,15 @@ pub struct Cli {
     /// Number of distinct queries cycled through during timing.
     #[arg(long, default_value_t = 16)]
     pub batch: usize,
-    /// Number of timing samples per config.
-    #[arg(long, default_value_t = 20)]
-    pub samples: usize,
+    /// Criterion sample count (`Criterion::sample_size`; minimum 10).
+    #[arg(long, default_value_t = 100)]
+    pub sample_size: usize,
+    /// Criterion warm-up time in seconds (`Criterion::warm_up_time`).
+    #[arg(long, default_value_t = 3.0)]
+    pub warmup_secs: f64,
+    /// Criterion measurement time in seconds (`Criterion::measurement_time`).
+    #[arg(long, default_value_t = 5.0)]
+    pub measurement_secs: f64,
     /// RNG seed.
     #[arg(long, default_value_t = 1)]
     pub seed: u64,
@@ -57,7 +67,10 @@ pub fn is_bench_invocation() -> bool {
 }
 
 /// A tiny config used when a bench is run under `cargo test --all-targets`
-/// (compile + smoke, not the full sweep).
+/// (compile + smoke, not the full sweep). The criterion knobs are shrunk to
+/// the minimum sample count and sub-second warm-up/measurement so the whole
+/// `cargo test` run stays in the seconds range while still exercising the
+/// `verify()` gate and the criterion measurement path.
 pub fn smoke_cli() -> Cli {
     Cli {
         m: 2000,
@@ -65,7 +78,9 @@ pub fn smoke_cli() -> Cli {
         epsilon: 4,
         lwe_dim: 256,
         batch: 4,
-        samples: 3,
+        sample_size: 10,
+        warmup_secs: 0.2,
+        measurement_secs: 0.2,
         seed: 1,
     }
 }
@@ -94,36 +109,60 @@ impl Stats {
     }
 }
 
-/// Measure `body` (one "operation" per call): warm up, auto-calibrate the
-/// inner iteration count to ~50 ms/sample, then collect `samples` samples
-/// and reduce to per-second statistics. `black_box` defeats dead-code
-/// elimination of the returned value.
-pub fn measure<F: FnMut()>(mut body: F, samples: usize) -> Stats {
-    // Calibrate on one call.
-    let probe = {
-        let s = Instant::now();
-        body();
-        s.elapsed()
-    };
-    let call_ns = probe.as_nanos().max(1) as u64;
-    let iters = (50_000_000u64 / call_ns).max(1);
-
-    // Warm up ~100 ms.
-    let warm = Instant::now();
-    while warm.elapsed() < Duration::from_millis(100) {
-        body();
+/// Measure `body` (one "operation" per call) with criterion and reduce the
+/// captured per-sample timings to per-second statistics plus the mean
+/// per-call latency.
+///
+/// Uses `iter_custom` (so the body can cycle over pre-built data and the
+/// per-sample `ns_per_iter` are captured directly) under a `Criterion`
+/// pinned to `cli`'s knobs — `sample_size`, `warm_up_time`,
+/// `measurement_time`. Those defaults (100 samples, 3 s warm-up, 5 s
+/// measurement) are the shared CANS2026 Table 3 measurement contract that
+/// RisePIR and ChalametPIR also pin, so the table's three rows are directly
+/// comparable. `black_box` in the body defeats dead-code elimination of the
+/// returned value; criterion's own report lands in `target/criterion/<label>/`.
+///
+/// The reduction is bit-for-bit the one the old hand-rolled sampler used:
+/// `mean_ops`/`min_ops`/`max_ops`/`stddev_ops` are the arithmetic
+/// statistics of the per-sample ops-per-second (`1e9 / ns_per_iter`), and
+/// `mean_ns` is the arithmetic mean of the per-sample `ns_per_iter` — so the
+/// CSV columns every bench writes are unchanged.
+pub fn measure<F: FnMut()>(label: &str, cli: &Cli, mut body: F) -> Stats {
+    let samples: Arc<Mutex<Vec<f64>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let mut c = Criterion::default()
+            .sample_size(cli.sample_size)
+            .warm_up_time(Duration::from_secs_f64(cli.warmup_secs))
+            .measurement_time(Duration::from_secs_f64(cli.measurement_secs));
+        let mut group = c.benchmark_group(label);
+        // Labels criterion's own report only; the returned stats always count
+        // one body call per sample.
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(label, |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    body();
+                }
+                let elapsed = start.elapsed();
+                let ns_per_iter = elapsed.as_nanos() as f64 / iters as f64;
+                samples.lock().unwrap().push(ns_per_iter);
+                elapsed
+            });
+        });
+        group.finish();
     }
 
-    let mut ns_per_iter = Vec::with_capacity(samples);
-    for _ in 0..samples.max(1) {
-        let start = Instant::now();
-        for _ in 0..iters {
-            body();
-        }
-        let elapsed = start.elapsed().as_nanos() as f64 / iters as f64;
-        ns_per_iter.push(elapsed);
+    let ns_per_iter: Vec<f64> = std::mem::take(&mut *samples.lock().unwrap());
+    if ns_per_iter.is_empty() {
+        return Stats {
+            mean_ops: 0.0,
+            min_ops: 0.0,
+            max_ops: 0.0,
+            stddev_ops: 0.0,
+            mean_ns: 0.0,
+        };
     }
-
     let ops: Vec<f64> = ns_per_iter.iter().map(|&ns| 1.0e9 / ns).collect();
     let k = ops.len() as f64;
     let mean_ops = ops.iter().sum::<f64>() / k;
