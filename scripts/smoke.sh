@@ -14,7 +14,10 @@ export KPIR_RESULTS_DIR="$SMOKE_BASE/kpir-index"
 rm -rf "$SMOKE_BASE"
 mkdir -p "$KPIR_RESULTS_DIR"
 
-ARGS=(--m 20000 --value-bytes 32 --lwe-dim 512 --epsilon 4 --samples 3 --batch 4)
+# Tiny criterion knobs (minimum sample count, sub-second warm-up/measurement)
+# keep the smoke pass to a couple of minutes while still gating on verify().
+ARGS=(--m 20000 --value-bytes 32 --lwe-dim 512 --epsilon 4 --batch 4 \
+      --sample-size 10 --warmup-secs 0.5 --measurement-secs 0.5)
 log "smoke: all benches at ${ARGS[*]}"
 for b in "${BENCHES[@]}"; do
     if out=$(cargo bench -p kpir-index --bench "$b" -- "${ARGS[@]}" 2>&1); then

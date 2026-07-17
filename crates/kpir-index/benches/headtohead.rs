@@ -30,14 +30,11 @@ fn run(cli: &helpers::Cli) {
 
     // Measure server answer latency, cycling the pre-built queries.
     let mut idx = 0usize;
-    let stats = helpers::measure(
-        || {
-            let ans = server.answer(&queries[idx]);
-            idx = (idx + 1) % queries.len();
-            helpers::keep_black_box_used(ans);
-        },
-        cli.samples,
-    );
+    let stats = helpers::measure("headtohead", cli, || {
+        let ans = server.answer(&queries[idx]);
+        idx = (idx + 1) % queries.len();
+        helpers::keep_black_box_used(ans);
+    });
 
     let query_bytes = shape.query_bytes();
     let response_bytes = shape.response_bytes();

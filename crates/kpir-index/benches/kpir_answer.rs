@@ -21,14 +21,11 @@ fn main() {
     helpers::verify(&server, &client, cli.m, cli.value_bytes);
 
     let mut idx = 0usize;
-    let stats = helpers::measure(
-        || {
-            let ans = server.answer(&queries[idx]);
-            idx = (idx + 1) % queries.len();
-            helpers::keep_black_box_used(ans);
-        },
-        cli.samples,
-    );
+    let stats = helpers::measure("kpir_answer", &cli, || {
+        let ans = server.answer(&queries[idx]);
+        idx = (idx + 1) % queries.len();
+        helpers::keep_black_box_used(ans);
+    });
 
     println!(
         "kpir_answer  m={} l={}B N={} pt={}  Ans={:.2} ms ({:.1} ans/s)  Qry={} Rsp={}",
