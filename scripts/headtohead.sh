@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Reproduce the KPIR^index row of CANS2026 Table 3: the head-to-head
-# online cost at m = 10^6 keys across value sizes {32, 256, 1024} B.
+# online cost at m = 10^6 keys across value sizes {256, 1024} B.
 #
 # Usage:  ./scripts/headtohead.sh [m] [extra bench flags...]
 #   m defaults to 1000000. Extra flags (e.g. --samples 30) are forwarded.

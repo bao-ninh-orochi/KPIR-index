@@ -15,9 +15,11 @@ die()  { printf '\033[0;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 # All benches live in the kpir-index crate.
 BENCHES=(headtohead kpir_answer kpir_query kpir_decode)
 
-# CANS2026 Table 3 head-to-head configuration.
+# CANS2026 Table 3 head-to-head configuration. 32 B is deliberately absent
+# from the value widths: the paper reports ℓ ∈ {256 B, 1 kB} only, matching
+# RisePIR's PAPER_VALUE_BITS. Pass `--value-bytes 32` to bench.sh to run it.
 HEADTOHEAD_M=1000000               # m = 10^6 keys
-HEADTOHEAD_VALUE_BYTES=(32 256 1024)
+HEADTOHEAD_VALUE_BYTES=(256 1024)
 HEADTOHEAD_LWE_DIM=1275            # 128-bit security; matches RisePIR-S's SimplePIR backend
 DEFAULT_EPSILON=4                  # mpc4j EPSILON
 
