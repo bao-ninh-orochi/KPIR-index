@@ -53,20 +53,76 @@
 //!   of two `≤ 16` whose block footprint `R·width` stays within 2048
 //!   cells. That table was measured on Apple M1 and stands off-x86.
 //! - **x86-64 table (RisePIR parity).** Mirrored bit-for-bit from the
-//!   RisePIR reference kernel's Zen 4 measurements (EPYC 9R14, AWS
-//!   `r7a.xlarge`), so the two schemes stay benchmarked under one
-//!   model. Narrow blocked levels lose on Zen 4 (`R ∈ {2,4,8}` at
-//!   `width ∈ [208, 832]`: 6–9 GB/s against 22–26 unblocked — a
-//!   stream-spacing cliff), so `129..=4096` streams unblocked; past
-//!   4096 the accumulator outgrows a 16 KiB half-L1 and blocking pays
-//!   again (`R ∈ {1,2,4,8,16}` at `width = 11138`: 13.3 / 18.3 / 22.2 /
-//!   23.0 / 21.2 GB/s), so wide widths — including this crate's answer
-//!   shapes, `R` = 18k–44k cells — take `R = 8`.
+//!   RisePIR reference kernel, so the two schemes stay benchmarked
+//!   under one model: `width ≤ 128 → R = 16`, `129..=4096 → R = 1`,
+//!   `> 4096 → R = 8` (this crate's answer shapes, 18k–44k cells, all
+//!   take the wide arm). Do not re-tune this table locally; adopt
+//!   whatever the RisePIR kernel ships. The `# Tuning` section below
+//!   records the machines, the cost model, and the evidence.
 //! - **Bit-exact.** `u32` wrapping add is associative and commutative, so
 //!   regrouping the row sum by blocks is bit-identical to the naive loop
 //!   for any `R`. Pinned by the unit tests.
 //! - **Constant-time schedule.** No data-dependent branches or indices —
 //!   the loop shape depends only on the public `(rows, width)`.
+//!
+//! # Tuning — the dispatch table is a measured, per-µarch object
+//!
+//! Nothing in the table is derived from first principles alone; every
+//! boundary was measured. The tables ship per target architecture:
+//!
+//! - **`aarch64`** (measured on Apple M1, 128 KiB L1d): the footprint
+//!   ladder — `R` = largest power of two `≤ 16` with
+//!   `R · width ≤ 2048` cells.
+//! - **`x86_64`** (measured on AMD Zen 4, EPYC 9R14, AWS
+//!   `r7a.xlarge`, 32 KiB L1d; spot-validated on Zen 2, EPYC 7R32,
+//!   AWS `c5a`): the three-band table above.
+//!
+//! ## The cost model behind the boundaries
+//!
+//! Per cell the pass pays one streamed DB read plus `1/R` of an
+//! accumulator load and store. Three regimes follow:
+//!
+//! 1. **`width ≤ 128`** — per-row loop overhead dominates; a large
+//!    `R` amortises it.
+//! 2. **Middle band, accumulator fits L1** (capped at half the cache,
+//!    `width ≤ L1d_bytes / 8` cells = 4096 at 32 KiB) — the
+//!    accumulator read-modify-write is nearly free, so `R = 1`, one
+//!    perfectly sequential DB stream, is optimal (22–27 GB/s on
+//!    Zen 4). Blocking here is actively harmful when the row stride
+//!    `4 · width` is under a page or two: the `R` streams interleave
+//!    inside the same pages, the per-page sequential prefetchers
+//!    cannot classify them, and throughput collapses (6–9 GB/s on
+//!    Zen 4 at `width ∈ [208, 832]`).
+//! 3. **`width > L1d_bytes / 8`** — the accumulator spills L1 and its
+//!    per-row read-modify-write through L2 roughly halves the rate
+//!    (13.3 GB/s at `width = 11138`), so blocking pays again — and is
+//!    safe, because the same threshold puts the `R` streams
+//!    `≥ 16` KiB apart, on distinct pages the prefetchers track
+//!    independently. `R = 8` balances amortisation against stream
+//!    count and register pressure.
+//!
+//! ## Measured reference curves (wide arm, GB/s by `R` = 1/2/4/8/16)
+//!
+//! - Zen 4 (EPYC 9R14): 13.3 / 18.3 / 22.2 / **23.0** / 21.2.
+//! - Zen 2 (EPYC 7R32): 12.7 / 16.5 / **18.4** / 17.5 / 17.1 (`R = 8`
+//!   within 5% of the `R = 4` peak, so one shared `R = 8` serves both).
+//!
+//! In this crate the wide arm carried the answer from ~12 GB/s to
+//! 24–25 GB/s at m = 10⁶ (256 B: 95.3 → 45.8 ms; 1024 B:
+//! 466 → 225 ms).
+//!
+//! ## Porting to a new microarchitecture
+//!
+//! Port the RisePIR kernel first and mirror the result here — the
+//! head-to-head is only meaningful while the two kernels are
+//! identical. The recipe (documented in full in the RisePIR module):
+//! move the middle boundary with the data cache (`L1d_bytes / 8`
+//! cells), re-sweep `R ∈ {1, 2, 4, 8, 16}` on the wide arm at a
+//! larger-than-cache shape expecting a single interior peak, and
+//! never ship a blocked arm at sub-page stride unmeasured. Re-tuning
+//! can never change an answer, only its speed: wrapping `u32`
+//! addition is associative and commutative, and the unit tests pin
+//! every arm against the naive loop bit for bit.
 
 /// Fold `qᵀ · D` into `acc` (all arithmetic mod `2³²`).
 ///
