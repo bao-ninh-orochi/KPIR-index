@@ -51,7 +51,17 @@
 //!   mod-`q` sum. Matches RisePIR's plain-`u32` kernel.
 //! - **Register blocking.** `R` rows per pass; `R` is the largest power
 //!   of two `≤ 16` whose block footprint `R·width` stays within 2048
-//!   cells.
+//!   cells. That table was measured on Apple M1 and stands off-x86.
+//! - **x86-64 table (RisePIR parity).** Mirrored bit-for-bit from the
+//!   RisePIR reference kernel's Zen 4 measurements (EPYC 9R14, AWS
+//!   `r7a.xlarge`), so the two schemes stay benchmarked under one
+//!   model. Narrow blocked levels lose on Zen 4 (`R ∈ {2,4,8}` at
+//!   `width ∈ [208, 832]`: 6–9 GB/s against 22–26 unblocked — a
+//!   stream-spacing cliff), so `129..=4096` streams unblocked; past
+//!   4096 the accumulator outgrows a 16 KiB half-L1 and blocking pays
+//!   again (`R ∈ {1,2,4,8,16}` at `width = 11138`: 13.3 / 18.3 / 22.2 /
+//!   23.0 / 21.2 GB/s), so wide widths — including this crate's answer
+//!   shapes, `R` = 18k–44k cells — take `R = 8`.
 //! - **Bit-exact.** `u32` wrapping add is associative and commutative, so
 //!   regrouping the row sum by blocks is bit-identical to the naive loop
 //!   for any `R`. Pinned by the unit tests.
@@ -76,12 +86,24 @@
 /// `Θ(q.len() · acc.len())` wrapping multiply-adds.
 pub(crate) fn matvec_accumulate(acc: &mut [u32], d: &[u32], q: &[u32]) {
     debug_assert_eq!(d.len(), q.len() * acc.len(), "matvec shape mismatch");
+    // Mirrors the RisePIR reference kernel's dispatch, including its
+    // measured Zen 4 table on x86-64: width ≤ 128 blocks at R = 16,
+    // 129..=4096 streams unblocked (L1-resident accumulator), wider
+    // takes R = 8. See the module docs.
     match acc.len() {
         0 => (),
         1..=128 => block_pass::<16>(acc, d, q),
+        #[cfg(not(target_arch = "x86_64"))]
         129..=256 => block_pass::<8>(acc, d, q),
+        #[cfg(not(target_arch = "x86_64"))]
         257..=512 => block_pass::<4>(acc, d, q),
+        #[cfg(not(target_arch = "x86_64"))]
         513..=1024 => block_pass::<2>(acc, d, q),
+        #[cfg(target_arch = "x86_64")]
+        129..=4096 => block_pass::<1>(acc, d, q),
+        #[cfg(target_arch = "x86_64")]
+        _ => block_pass::<8>(acc, d, q),
+        #[cfg(not(target_arch = "x86_64"))]
         _ => block_pass::<1>(acc, d, q),
     }
 }
@@ -150,6 +172,10 @@ mod tests {
             (65, 1024),
             (5, 2049),
             (3, 208),
+            (5, 4096),
+            (5, 4097),
+            (3, 12000),
+            (17, 11138),
         ];
         for (n, width) in shapes {
             let mut d = vec![0u32; n * width];
