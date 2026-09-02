@@ -44,7 +44,7 @@ reference (`SimpleCpIdxPir`).
 | `backend` | `SimplePirServer` (row-major `C×R` `u32` DB; `setup`/`answer`; decode-bound guard in `from_row_major_db`), `SimplePirClient` (`new` from a real hint, or `with_local_server` — the bit-identical fast path for co-located benchmarks), `Hint` |
 | `params` | `SimpleParams` (runtime knobs) / `SimpleConfig` (user-facing knobs), `noise_bound_satisfied` — the SimplePIR Gaussian decode bound shared by the backend guard and the `kpir-index` operating-point selector, `MAX_PLAINTEXT_BITS = 14` |
 | `matvec` | the shared register-blocked `acc += qᵀ·D` kernel behind every op — `answer` (`qu·D`), `setup` (`Aᵀ·D`), the `A·s` / `sᵀ·H` precompute — **bit-identical** to the RisePIR kernel (width-adaptive blocking, `R` rows per pass with `R·width ≤ 2048`). Measured single-threaded on Apple M1 this beats ChalametPIR's column-major dot product (28–37% when the accumulator fits L1; ChalametPIR's edge was rayon parallelism, which this crate forgoes) |
-| `sampler` | ChaCha20-seeded `A` expansion (transposed `N×C` layout = `Aᵀ`), uniform-`Z_q` secret, Box–Muller discrete Gaussian |
+| `sampler` | ChaCha20-seeded `A` expansion (transposed `N×C` layout = `Aᵀ`), uniform-`Z_q` secret, true discrete Gaussian `D_σ` (table rejection sampler after `ahenzinger/simplepir pir/gauss.go`) |
 | `arith` | `round_q_to_p` (`Round_Δ`), width-generic; equals `mpc4j`'s byte recovery at `plaintext_bits = 8` |
 
 ## Parameters
