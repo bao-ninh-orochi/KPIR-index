@@ -31,7 +31,8 @@ security notice.
     rayon parallelism, which this crate forgoes. The module doc records the
     numbers.
   - `sampler.rs` — ChaCha-seeded `A` expansion (transposed `N×C` layout = `Aᵀ`),
-    uniform-`Z_q` secret, Box–Muller discrete Gaussian.
+    uniform-`Z_q` secret, true discrete Gaussian `D_σ` (table rejection
+    sampler after `ahenzinger/simplepir pir/gauss.go`).
   - `arith.rs` — `round_q_to_p` (`Round_Δ`), width-generic (matches `mpc4j`'s
     byte recovery at `plaintext_bits = 8`).
   - `backend.rs` — `SimplePirServer` (row-major `C×R` `u32` DB `db[c*R+r]` —
